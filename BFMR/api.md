@@ -1,11 +1,12 @@
 # BFMR API
 
-BFMR exposes two separate APIs with different base URLs and authentication:
+BFMR exposes three separate APIs with different base URLs and authentication:
 
 | Surface | Base URL | Auth |
 |---------|----------|------|
-| REST API | `https://api.bfmr.com/api/v2` | API-KEY / API-SECRET headers |
+| REST API | `https://api.bfmr.com/api/v2` | `X-API-KEY` + `X-API-SECRET` headers |
 | Web App API | `https://www.bfmr.com/api` | JWT Bearer token (from login) |
+| TrackForMe Extension API | `https://hr-ext-api.bfmr.com/api` | `Bearer <extToken>` (UUID, not api_key) |
 
 ---
 
@@ -32,15 +33,71 @@ JWT Bearer token obtained from `POST /api/login`. Expires in ~30 days.
 
 #### `POST /api/login`
 
+**Required body** — the `remember` field is mandatory; omitting it returns `422`:
 ```json
-{ "email": "...", "password": "..." }
+{ "email": "...", "password": "...", "remember": false }
 ```
 
-Response field: `access_token` (also check `token`). Use as `Authorization: Bearer <token>`.
+**Response shape:**
+```json
+{ "success": true, "status": 200, "message": "...", "data": { "token": "<JWT>" } }
+```
+
+Extract token from `data.token` (nested under `data`, NOT a top-level `access_token`).
+
+Use as `Authorization: Bearer <token>` on all subsequent requests.
 
 POST requests also require the XSRF-TOKEN cookie value sent as `X-XSRF-TOKEN` header (Laravel CSRF protection). The cookie is set by the login response.
 
 Credentials stored as `bfmr_email` and `bfmr_password` in user settings.
+
+---
+
+#### `GET /api/user/profile?_ts=<Date.now()>`
+
+Fetch the authenticated user's profile, including API key and secret.
+
+**Headers:** `Authorization: Bearer <token>`, `Cookie: <cookieStr>`
+
+**Response shape:**
+```json
+{
+  "success": true,
+  "data": {
+    "user": {
+      "id": 123,
+      "email": "...",
+      "api_access": {
+        "api_key": "...",
+        "api_secret": "..."
+      }
+    }
+  }
+}
+```
+
+Extract: `data.user.api_access.api_key` and `data.user.api_access.api_secret`.
+
+The `_ts` query param is a timestamp — the server ignores its value; it just busts cache.
+
+---
+
+#### `GET /api/get-amazon-extensions-token?_ts=<Date.now()>`
+
+Fetch the current extension token (UUID). Used as Bearer auth for the TrackForMe Extension API.
+
+**Response shape:**
+```json
+{ "success": true, "data": { "token": "8b5ef217-xxxx-xxxx-xxxx-xxxxxxxxxxxx" } }
+```
+
+Extract: `data.token`.
+
+> **Warning:** `POST /api/reset-amazon-extensions-token` resets this token — calling it invalidates the live TrackForMe extension. Always use GET, never POST.
+
+Stored as `bfmr_ext_token` in user settings.
+
+---
 
 ## Endpoints
 
@@ -204,10 +261,45 @@ List all retailers supported by BFMR deals.
 
 **Response:** Array of retailer names/objects.
 
+---
+
+## TrackForMe Extension API (`hr-ext-api.bfmr.com`)
+
+Used by the BFMR TrackForMe Chrome extension (`ikhaebolenfgboimhmdminlbjfebmbpo`) to push Amazon order + tracking data directly to BFMR.
+
+**Auth:** `Authorization: Bearer <extToken>` where extToken is the UUID from `GET /api/get-amazon-extensions-token` (NOT the `api_key`).
+
+### `POST /api/auth`
+
+Verify the extToken is valid.
+
+### `POST /api/orders`
+
+Submit order data (including tracking numbers) scraped from Amazon.
+
+**Request:** `{ "order_data": [...] }` — exact shape of each `order_data` item not yet confirmed. The extension scrapes Amazon order pages and sends the structured data here.
+
+> **Status:** Endpoint and auth confirmed from extension source code. The exact `order_data` payload shape has not been captured from a live request. Rewrite of `submitTracking()` is blocked until a live request is observed.
+
+### `POST /api/fetch-order-responses`
+
+Poll for BFMR's responses on previously submitted orders.
+
+---
+
 ## Integration Files
 
 | File | Purpose |
 |------|---------|
-| `lib/bfmr.ts` | REST API client — API-KEY/SECRET auth, deals, reservations, shipments |
-| `lib/bfmrWeb.ts` | Web App API client — JWT login, profile fetch, tracker fetch, tracking submission |
-| `app/api/bfmr/web-login/route.ts` | POST handler — logs in with email/password, fetches and saves API key/secret from profile |
+| `lib/bfmr.ts` | REST API client — `X-API-KEY`/`X-API-SECRET` auth, deals, reservations, shipments |
+| `lib/bfmrWeb.ts` | Web App API client — JWT login, profile + extToken fetch, tracker fetch, tracking submission |
+| `app/api/bfmr/web-login/route.ts` | POST handler — logs in with email/password, fetches and saves all 5 settings |
+| `app/api/bfmr/full-sync/route.ts` | POST handler — bulk BFMR order sync, called by "Resync Groups" |
+
+**Settings keys:** `bfmr_email`, `bfmr_password`, `bfmr_api_key`, `bfmr_api_secret`, `bfmr_ext_token`
+
+## Known Unknowns
+
+| # | What | Why needed |
+|---|------|------------|
+| 1 | Exact `order_data` payload shape for `POST /api/orders` on `hr-ext-api.bfmr.com` | Rewrite `submitTracking()` to use TrackForMe API instead of `POST /api/my-tracker` |

@@ -244,8 +244,10 @@ interface PaymentListing {
 
 | File | Purpose |
 |------|---------|
-| `lib/cardcenter.ts` | `getCcToken()`, `submitCards()` |
+| `lib/cardcenter.ts` | `getCcToken()`, `getPaymentDetail()`, `submitCards()` |
 | `app/api/cardcenter/submit/route.ts` | POST handler — submits unsubmitted cards for an order |
+| `app/api/cardcenter/sync-payments/route.ts` | POST handler — bulk sync: matches gift cards by `ccGiftCardId` to payment listings, updates `bgPaidAmount` per order |
+| `app/api/cardcenter/sync-payment/route.ts` | POST handler — single payment sync |
 | `app/api/cardcenter/payments/route.ts` | GET handler — fetches payments (all statuses) with optional `status` filter |
 | `app/api/cardcenter/test/route.ts` | GET handler — verifies auth, reservations, and agreement |
 | `app/api/cardcenter/brands/route.ts` | GET handler — returns unique brand names for autocomplete |
