@@ -157,11 +157,21 @@ Response: **unknown** — need to capture to determine if CardCenter returns `gi
 
 Query params: `paidTo`, `paidBy`, `status`, `batch`, `purchaseOrder`, `recipientReconciled`, `senderReconciled`, `date.start`, `date.end`
 
-Payment statuses: `Waiting` → `Sent` → `Completed`
+Payment statuses (response `status` field): `Waiting` → `Sent` → `Completed`
 
-- `Waiting`: scheduled, no `id` yet
+API filter values (`status` query param) differ from response names:
+
+| Response status | Filter param value |
+|---|---|
+| `Waiting` | `Scheduled` |
+| `Sent` | `Sent` |
+| `Completed` | `Completed` |
+
+- `Waiting` / `Scheduled`: queued, no `id` yet
 - `Sent`: in transit, has `id`
 - `Completed`: received, has `id`
+
+**Note:** With no `status` filter the API does not return all statuses — fetch each status separately and combine.
 
 Response: `{ items: Payment[], nextPageToken: string }` (paginated)
 
