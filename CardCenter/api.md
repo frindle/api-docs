@@ -246,7 +246,12 @@ interface PaymentListing {
 |------|---------|
 | `lib/cardcenter.ts` | `getCcToken()`, `submitCards()` |
 | `app/api/cardcenter/submit/route.ts` | POST handler — submits unsubmitted cards for an order |
+| `app/api/cardcenter/payments/route.ts` | GET handler — fetches payments (all statuses) with optional `status` filter |
 | `app/api/cardcenter/test/route.ts` | GET handler — verifies auth, reservations, and agreement |
 | `app/api/cardcenter/brands/route.ts` | GET handler — returns unique brand names for autocomplete |
 
 Credentials stored in `Setting` table as `cc_email` and `cc_password` per user.
+
+Seller ID is resolved at runtime from `GET /Api/Reservations` → `items[0].seller.id` and used as `paidTo` on all payment requests.
+
+`GiftCard.ccGiftCardId` stores CardCenter's internal gift card ID for payment matching. Currently populated via manual entry in the UI; auto-population on submission pending capture of the POST `/Api/Submissions` response (see Known Unknowns #2).

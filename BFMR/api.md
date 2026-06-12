@@ -209,4 +209,5 @@ List all retailers supported by BFMR deals.
 | File | Purpose |
 |------|---------|
 | `lib/bfmr.ts` | REST API client — API-KEY/SECRET auth, deals, reservations, shipments |
-| `lib/bfmrWeb.ts` | Web App API client — JWT login, tracker fetch, tracking submission |
+| `lib/bfmrWeb.ts` | Web App API client — JWT login, profile fetch, tracker fetch, tracking submission |
+| `app/api/bfmr/web-login/route.ts` | POST handler — logs in with email/password, fetches and saves API key/secret from profile |
