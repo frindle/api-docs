@@ -157,6 +157,8 @@ Response: **unknown** — need to capture to determine if CardCenter returns `gi
 
 Query params: `paidTo`, `paidBy`, `status`, `batch`, `purchaseOrder`, `recipientReconciled`, `senderReconciled`, `date.start`, `date.end`
 
+**`paidTo` is required** — omitting it returns no results. Set it to the seller's numeric ID (e.g. `1056`). Resolve the seller ID from `GET /Api/Reservations` → `items[0].seller.id`.
+
 Payment statuses (response `status` field): `Waiting` → `Sent` → `Completed`
 
 API filter values (`status` query param) differ from response names:
