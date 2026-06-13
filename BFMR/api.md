@@ -157,7 +157,7 @@ Deal detail with items and per-item reservation state. Called when opening a dea
 | `enable_request_more_cta` | boolean | Whether to show "request more" button |
 | `remaining_reservations` | number | Total remaining slots globally |
 | `reserve_max_avail_qty` | number | Max quantity per reservation request |
-| `is_user_reserved` | 0\|1 | Whether current user has reserved this item |
+| `is_user_reserved` | number | Count of items the user has reserved (e.g. `3`); not a boolean |
 | `tracking_deadline` | string \| null | |
 | `has_48_hrs` | 0\|1 | |
 | `deal_value` | string | Same as deal-level value |
@@ -235,6 +235,63 @@ Reserve items on a deal.
   }
 }
 ```
+
+---
+
+#### `GET /api/deals/{slug}/retailer-links-deal-detail?_ts=<Date.now()>` (Web App API)
+
+Called immediately after a successful `POST /api/deals/reserve`. Returns current vendor stock status and updated per-item reservation state.
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "vendors": [
+      {
+        "vendor_id": 2,
+        "vendor_name": "Walmart",
+        "vendor_logo": "https://...",
+        "vendor_order": 2,
+        "in_stock": true
+      }
+    ],
+    "items": [
+      {
+        "item_id": 15298,
+        "reserved_qty": "",
+        "enable_request_more_cta": true,
+        "remaining_reservations": 23,
+        "reserve_max_avail_qty": 1,
+        "is_user_reserved": 3,
+        "color_name": "Black",
+        "color_code": "#000000FF",
+        "model_number": "43Q31K",
+        "band_size": null,
+        "tracking_deadline": null,
+        "is_expired": 0,
+        "has_48_hrs": 1
+      }
+    ],
+    "identifiers": [
+      [
+        {
+          "item_name": "...",
+          "identifier": "15822164529",
+          "link_url": "https://ftc.cash/r5Rn8",
+          "closing_status": false,
+          "closing_date": null,
+          "in_stock": true,
+          "item_id": 15298,
+          "vendor_id": 2
+        }
+      ]
+    ]
+  }
+}
+```
+
+`is_user_reserved` reflects the updated count after reservation. `identifiers` is a 2D array (one sub-array per item) of retailer product links with in-stock status.
 
 ---
 
@@ -355,6 +412,57 @@ Submit or update tracker rows (used to set tracking numbers).
 ```
 
 **Flow:** GET tracker rows → find row where `order_id` matches our order number → POST the full row back with `tracking_number` set.
+
+---
+
+#### `PUT /api/my-tracker/action` (Web App API)
+
+Cancel a reservation (and likely other tracker actions).
+
+**Headers:** `Authorization: Bearer <token>`, `X-XSRF-TOKEN: <xsrf>`
+
+**Request:**
+```json
+{
+  "action": "cancel",
+  "tracker_data": [
+    {
+      "id": 1628298,
+      "type": "reservation",
+      "force_delete_shipment_after_deadline": 0,
+      "item_id": 15298,
+      "qty": "3",
+      "order_id": "",
+      "retail_price": 158,
+      "sub_total": 474,
+      "tracking_number": "",
+      "qty_received": "-",
+      "paid_at": " - ",
+      "amount_paid": "-",
+      "reserved_at": "06/13/2026",
+      "scanned_at": " - ",
+      "notes": "",
+      "status": "reserved",
+      "deal_id": 9175,
+      "SID": null,
+      "RID": 1628298,
+      "PID": null,
+      "is_bundle": 0,
+      "my_tracker_id": 4375158,
+      "has_custom_columns": 0,
+      "custom_columns": []
+    }
+  ],
+  "dateRange": { "start": "2026-03-13", "end": "2026-06-13" }
+}
+```
+
+**Response:**
+```json
+{ "success": true, "status": 200, "message": "Data updated successfully!", "data": null }
+```
+
+Pass the full tracker row as received from `GET /api/my-tracker` — same shape as `POST /api/my-tracker` but wrapped with `"action": "cancel"` and using PUT method.
 
 **Note:** Send the complete row object as received from GET — do not strip fields. The `dateRange` is a ~3-month window matching the GET query.
 
