@@ -217,7 +217,18 @@ Deal detail with items and per-item reservation state. Called when opening a dea
 
 Reserve items on a deal.
 
-> **Request body not yet captured from spy** — structure unknown. Known to include deal/item identifiers and quantity.
+**Content-Type:** `application/x-www-form-urlencoded` (not JSON — spy tool cannot capture this)
+
+**Request body:**
+```
+deal_slug=tcl-43-q31k-series-1080p-fhd-qled-smart-tv-with-google-tv
+reservations[0][item_id]=15298
+reservations[0][item_qty]=3
+```
+
+Multiple items use `reservations[0]`, `reservations[1]`, etc.
+
+**Headers:** `Authorization: Bearer <token>`, `X-XSRF-TOKEN: <xsrf>`
 
 **Response (confirmed):**
 ```json
@@ -590,9 +601,8 @@ Poll for BFMR's responses on previously submitted orders.
 
 | # | What | Why needed |
 |---|------|------------|
-| 1 | `POST /api/deals/reserve` request body | Build reservation feature in the app |
-| 2 | `GET /deal/reservations/active` response shape | Show user's active reservations |
-| 3 | Exact `order_data` payload shape for `POST /api/orders` on `hr-ext-api.bfmr.com` | Rewrite `submitTracking()` to use TrackForMe API instead of `POST /api/my-tracker` |
+| 1 | `GET /deal/reservations/active` response shape | Show user's active reservations |
+| 2 | Exact `order_data` payload shape for `POST /api/orders` on `hr-ext-api.bfmr.com` | Rewrite `submitTracking()` to use TrackForMe API instead of `POST /api/my-tracker` |
 
 ---
 
