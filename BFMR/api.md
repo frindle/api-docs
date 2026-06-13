@@ -154,6 +154,62 @@ Deal detail with items and per-item reservation state. Called when opening a dea
 | `band_size` | null | For ring/watch deals |
 | `reserved_qty` | string | User's current reserved quantity (empty string = none) |
 | `max_can_reserve` | number | How many more the user can reserve |
+| `enable_request_more_cta` | boolean | Whether to show "request more" button |
+| `remaining_reservations` | number | Total remaining slots globally |
+| `reserve_max_avail_qty` | number | Max quantity per reservation request |
+| `is_user_reserved` | 0\|1 | Whether current user has reserved this item |
+| `tracking_deadline` | string \| null | |
+| `has_48_hrs` | 0\|1 | |
+| `deal_value` | string | Same as deal-level value |
+| `links` | DealLink[] | Vendor links with stock status and purchase URL |
+
+**DealLink fields (confirmed):**
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `id` | number | |
+| `deal_id` | number | |
+| `vendor_id` | number | |
+| `item_id` | number | |
+| `price` | string | |
+| `status` | number | |
+| `out_of_stock` | 0\|1 | |
+| `in_stock` | boolean | |
+| `vendor.name` | string | e.g. `"Walmart"` |
+| `vendor.slug` | string | |
+| `vendor.url` | string | |
+| `vendor.logo_url` | string | |
+| `item_link.link_url` | string | Purchase URL (may be redirect/affiliate link) |
+| `item_link.identifier` | string | Retailer product identifier |
+
+**Additional deal-level fields (confirmed):**
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `current_limit` | number | User's current global reservation limit (same as `max_can_reserve`) |
+| `retailers` | `{name, slug, logo, vendor_order, in_stock}[]` | Active retailers for this deal |
+| `item_colors` | `{name, code}[]` | Unique colors across items |
+| `is_reservation_closed` | 0\|1 | |
+| `reservation_closed_at` | string \| null | |
+| `is_increase_request_pending` | boolean | |
+| `any_tracking_deadline_set` | boolean | |
+| `is_tracking_deadline_same` | boolean | |
+| `tracking_deadline_all` | 0\|1 | |
+| `value` | string | Same as `deal_value` |
+| `retail_type` | string | `"Full Retail"` \| `"Below Retail"` \| `"Above Retail"` |
+| `retail_price` | string \| null | |
+| `above_retail_amount` | string \| null | |
+| `back_in_sale` | 0\|1 | |
+| `other_retailers` | 0\|1 | |
+| `address_id` | number | |
+| `available_addresses` | string | JSON-encoded array of address IDs |
+| `code` | string | e.g. `"D-T7WMQ"` |
+| `ends_at` | string \| null | |
+| `new_till` | string | Date until deal is marked "new" |
+| `subscribed` | boolean | Whether user is subscribed to deal alerts |
+| `still_on_sale` | 0\|1 | |
+| `closed` | boolean | |
+| `combine_items` | 0\|1 | |
 
 ---
 
