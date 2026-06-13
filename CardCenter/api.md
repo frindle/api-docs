@@ -19,7 +19,7 @@ Use as `Authorization: Bearer <token>` on all subsequent requests.
 
 ### GET `/Api/Reservations`
 
-Pre-assigned reservations for your account. Narrower pool than buy orders — only reservations CardCenter has explicitly allocated to you.
+Returns already-approved reservations waiting for card submission. Reservations are NOT created here — they're created as a side effect of `POST /Api/Rates/{id}/Actions/ReserveCap`.
 
 Response shape: `{ items: CcReservation[] }` or `CcReservation[]` directly.
 
@@ -45,6 +45,45 @@ interface CcReservation {
 ```
 
 Filter for submittable reservations: `status === 'Approved' && !expired && permissions.submit !== false`
+
+---
+
+### POST `/Api/Rates/{buyOrderId}/Actions/ReserveCap`
+
+**Creates a reservation** for a buy order. This is how reservations are made — not via a separate reservations endpoint.
+
+Request:
+```json
+{ "quantity": 4 }
+```
+
+Response: A submission object (same shape as `GET /Api/Submissions/{id}`) with a nested reservation. The submission UUID is returned immediately; the reservation starts in `Processing` status and transitions to `Approved` within a few seconds.
+
+```ts
+interface ReserveCapResponse {
+  id: string;           // submission UUID — poll GET /Api/Submissions/{id}
+  date: string;
+  buyer: { id: number; displayName: string; email: string };
+  seller: { id: number; email: string };
+  readyForPayment: boolean;
+  groups: [{
+    id: string;
+    brand: CcBrand;
+    value: number;
+    reservation: {
+      id: number;
+      status: "Processing" | "Approved";
+      submissionToken: string;
+      submissionDeadline: string;   // only present once Approved
+      expired: boolean;
+      permissions: { submit: boolean };
+      // ...full CcReservation fields
+    };
+  }];
+}
+```
+
+After calling this, poll `GET /Api/Submissions/{id}` until `groups[0].reservation.status === "Approved"`.
 
 ---
 
@@ -113,43 +152,75 @@ Response: `{ sellerAgreement: { agreement: { id: string, date: string } } }`
 
 ---
 
+### POST `/Api/Reservations/{reservationId}/ParsedCards`
+
+Validates card codes against a reservation. Called before submission to parse and verify codes.
+
+Request:
+```json
+{ "text": "CODE1\nCODE2\nCODE3\nCODE4" }
+```
+(Newline-separated card codes)
+
+Response:
+```json
+{
+  "cards": [
+    { "brand": CcBrand, "value": 50, "code": "CODE1" }
+  ],
+  "submission": {
+    "groups": [
+      {
+        "brand": CcBrand,
+        "value": 50,
+        "quantity": 4,
+        "offers": [ { "reservation": CcReservation, ... } ]
+      }
+    ]
+  }
+}
+```
+
+The `submission.groups` from this response is passed directly as the `groups` field in `POST /Api/Submissions`.
+
+---
+
+### GET `/Api/Reservations/{id}`
+
+Single reservation detail. Same shape as `GET /Api/Reservations` items plus `submissionInstructions` and `sellerAgreement`. Use `reservation.seller` for the submission's `seller` field.
+
+---
+
+### POST `/Api/Reservations/{id}/Actions/Cancel`
+
+Cancels an open reservation. Request body: `{}`. Returns the reservation with `status: "Canceled"`.
+
+```json
+{ "status": "Canceled", "permissions": { "comment": true } }
+```
+
+---
+
 ### POST `/Api/Submissions`
 
-Submit gift cards for sale.
+Submit gift cards for sale against a reservation.
 
-#### Current implementation (reservation-based)
-
-Matches cards against `/Api/Reservations` by `brand.name` (case-insensitive) + `value`.
+**Current implementation** (captured from spy): call `POST /Api/Reservations/{id}/ParsedCards` first, then pass `submission.groups` directly.
 
 Request payload:
 ```json
 {
   "seller": { "id": number, "email": string },
-  "acceptAgreement": { "id": string, "date": string },
-  "groups": [
-    {
-      "brand": { "name": string, "slug": string, "type": string, "image": { "id": string }, "id": number },
-      "cards": [
-        {
-          "brand": { ... },
-          "code": "CARDNUMBERHERE",
-          "value": 100,
-          "quantity": 1,
-          "reservation": { ...full CcReservation object... }
-        }
-      ]
-    }
-  ]
+  "groups": [ ...parsed.submission.groups from ParsedCards response... ]
 }
 ```
 
-Cards are grouped by `brand.id`. The `reservation` object is the full reservation from GET `/Api/Reservations`, sorted by soonest `submissionDeadline`. Each reservation is used at most once.
+`seller` comes from `GET /Api/Reservations/{id}` → `reservation.seller`.
+No `acceptAgreement` needed in this flow.
 
-#### TODO: buy-order-based submission
+Response: submission UUID (`id`), `readyForPayment: boolean`, and groups. Reservation status transitions to `Closed` on success.
 
-When submitting against a buy order directly (no pre-assigned reservation), the `reservation` field in each card may become `buyOrder` or `rate` — **unknown, needs capture**. See task: "Capture POST /Api/Submissions response from CardCenter site".
-
-Response: **unknown** — need to capture to determine if CardCenter returns `giftCard.id` per submitted card (required for payment matching).
+Response: **full structure truncated in spy capture** — `giftCard.id` per card is likely present in `groups[].offers[]` but not confirmed. Use `GET /Api/Payments/{id}` → `listings[].listing.giftCard.id` for payment matching.
 
 ---
 
@@ -234,9 +305,9 @@ interface PaymentListing {
 
 | # | What | Why needed |
 |---|------|------------|
-| 1 | POST `/Api/Submissions` request payload when using a buy order (not reservation) | Rewrite `submitCards()` to use `/Api/BuyOrders/v2` instead of `/Api/Reservations` |
-| 2 | POST `/Api/Submissions` response body | Determine if CardCenter returns `giftCard.id` per card for payment matching |
-| 3 | Whether reservations can be created via API | Automation of reservation step |
+| 1 | ~~Whether reservations can be created via API~~ **RESOLVED**: `POST /Api/Rates/{id}/Actions/ReserveCap` with `{"quantity": N}` | - |
+| 2 | ~~Actual card submission endpoint and payload after reservation is Approved~~ **RESOLVED**: `POST /Api/Reservations/{id}/ParsedCards` → `POST /Api/Submissions` with `seller` + `parsed.submission.groups` | - |
+| 3 | POST `/Api/Submissions` response body | Determine if CardCenter returns `giftCard.id` per card for payment matching — spy capture was truncated |
 
 ---
 
@@ -245,15 +316,21 @@ interface PaymentListing {
 | File | Purpose |
 |------|---------|
 | `lib/cardcenter.ts` | `getCcToken()`, `getPaymentDetail()`, `submitCards()` |
-| `app/api/cardcenter/submit/route.ts` | POST handler — submits unsubmitted cards for an order |
+| `app/api/cardcenter/buy-orders/route.ts` | GET handler — all open buy orders grouped by brand (powers Rates page) |
+| `app/api/cardcenter/rates/route.ts` | GET handler — buy orders filtered by brand+value (used by gift card panel) |
+| `app/api/cardcenter/reserve/route.ts` | POST handler — reserve + submit in one step (from order detail gift card panel) |
+| `app/api/cardcenter/reserve-only/route.ts` | POST handler — reserve without submitting cards (from Rates page) |
+| `app/api/cardcenter/reservations/route.ts` | GET handler — open CC reservations, filterable by brand+value |
+| `app/api/cardcenter/reservations/[id]/route.ts` | DELETE handler — cancels a reservation via Actions/Cancel |
+| `app/api/cardcenter/fulfill-reservation/route.ts` | POST handler — submits cards to an existing reservation |
+| `app/api/cardcenter/submit/route.ts` | POST handler — submits unsubmitted cards for an order (legacy, uses submitCards()) |
 | `app/api/cardcenter/sync-payments/route.ts` | POST handler — bulk sync: matches gift cards by `ccGiftCardId` to payment listings, updates `bgPaidAmount` per order |
 | `app/api/cardcenter/sync-payment/route.ts` | POST handler — single payment sync |
 | `app/api/cardcenter/payments/route.ts` | GET handler — fetches payments (all statuses) with optional `status` filter |
-| `app/api/cardcenter/test/route.ts` | GET handler — verifies auth, reservations, and agreement |
 | `app/api/cardcenter/brands/route.ts` | GET handler — returns unique brand names for autocomplete |
 
 Credentials stored in `Setting` table as `cc_email` and `cc_password` per user.
 
-Seller ID is resolved at runtime from `GET /Api/Reservations` → `items[0].seller.id` and used as `paidTo` on all payment requests.
+Seller ID is resolved at runtime from `GET /Api/Reservations/{id}` → `reservation.seller.id` and used as `paidTo` on all payment requests.
 
-`GiftCard.ccGiftCardId` stores CardCenter's internal gift card ID for payment matching. Currently populated via manual entry in the UI; auto-population on submission pending capture of the POST `/Api/Submissions` response (see Known Unknowns #2).
+`GiftCard.ccGiftCardId` stores CardCenter's internal gift card ID for payment matching. Currently populated via manual entry in the UI; auto-population on submission pending capture of the POST `/Api/Submissions` response (see Known Unknowns #3).
