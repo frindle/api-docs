@@ -199,7 +199,9 @@ Cancels an open reservation. Request body: `{}`. Returns the reservation with `s
 
 Submit gift cards for sale against a reservation.
 
-**Current implementation** (captured from spy): call `POST /Api/Reservations/{id}/ParsedCards` first, then pass `submission.groups` directly.
+Flow: `POST /Api/Reservations/{id}/ParsedCards` → strip groups to `brand/value/quantity` → inject full reservation → `POST /Api/Submissions`.
+
+**IMPORTANT**: Do NOT spread the full ParsedCards group object. The `offers` field must be omitted — sending it causes a 400 `"Submissions must have at least one new reservation or at least one submitted card"`. Only send `brand`, `value`, `quantity`, and `reservation`.
 
 Request payload:
 ```json
@@ -207,20 +209,21 @@ Request payload:
   "seller": { "id": number, "email": string },
   "groups": [
     {
-      ...group fields from ParsedCards response...,
-      "reservation": { "id": reservationId }
+      "brand": CcBrand,
+      "value": number,
+      "quantity": number,
+      "reservation": CcReservation
     }
   ]
 }
 ```
 
-`seller` comes from `GET /Api/Reservations/{id}` → `reservation.seller`.
-`groups` = ParsedCards `submission.groups` with `reservation: { id }` injected into each group — ParsedCards omits this field but Submissions requires it (`Groups[0].Reservation: The Reservation field is required`).
+`seller` and `reservation` come from `GET /Api/Reservations/{id}`.
 No `acceptAgreement` needed in this flow.
 
 Response: submission UUID (`id`), `readyForPayment: boolean`, and groups. Reservation status transitions to `Closed` on success.
 
-Response: **full structure truncated in spy capture** — `giftCard.id` per card is likely present in `groups[].offers[]` but not confirmed. Use `GET /Api/Payments/{id}` → `listings[].listing.giftCard.id` for payment matching.
+The POST response groups do NOT include `submittedCards`. Fetch `GET /Api/Submissions/{id}` immediately after to get per-card data including `giftCard.id` and `paymentReceivedOn`.
 
 ---
 
@@ -270,6 +273,27 @@ interface Payment {
 
 ---
 
+### GET `/Api/Submissions/{id}`
+
+Full submission detail. Includes `submittedCards` per group. Available immediately after `POST /Api/Submissions`.
+
+```ts
+interface SubmittedCard {
+  id: number;                      // listing ID (same as PaymentListing.listing.id)
+  giftCard: { id: number; code: string };  // code is truncated: "…2SVV" (last 4 chars only)
+  paymentDueDate: string;
+  paymentSentOn: string;
+  paymentReceivedOn: string;       // use as Order.overdueAt — no need to query /Api/Payments
+  purchasePrice: number;
+  value: number;
+  brand: CcBrand;
+}
+```
+
+`giftCard.id` = `GiftCard.ccGiftCardId`. Match to local cards by `cardNumber.endsWith(code.replace(/^…/, ''))`.
+
+---
+
 ### GET `/Api/Payments/{id}`
 
 Single payment detail. Includes `listings` array linking the payment to individual card submissions.
@@ -281,7 +305,7 @@ interface PaymentListing {
   listing: {
     $type: "SellOffer";
     id: number;
-    giftCard: { id: number };     // CardCenter's internal gift card ID — use for matching
+    giftCard: { id: number };     // CardCenter's internal gift card ID — matches GiftCard.ccGiftCardId
     value: number;
     brand: CcBrand;
     purchasePrice: number;
@@ -297,7 +321,7 @@ interface PaymentListing {
 }
 ```
 
-`listing.giftCard.id` links to our `GiftCard.ccGiftCardId` column (TODO: add this column and populate on submission).
+`listing.giftCard.id` matches `GiftCard.ccGiftCardId`.
 
 ---
 
