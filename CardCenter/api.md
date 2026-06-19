@@ -172,7 +172,9 @@ Response:
 The `submission.groups` from this response is **not** passed directly — each group is missing the `reservation` field required by `POST /Api/Submissions`. Before submitting, inject `{ reservation: { id: reservationId } }` into each group:
 
 ```ts
-const groups = parsed.submission.groups.map(g => ({ ...g, reservation: { id: reservationId } }));
+// reservationDetail = full object from GET /Api/Reservations/{id}
+// CardCenter requires Brand, Seller, and Quantity — { id } alone returns 400
+const groups = parsed.submission.groups.map(g => ({ ...g, reservation: reservationDetail }));
 ```
 
 ---
