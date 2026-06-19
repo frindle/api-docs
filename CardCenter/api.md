@@ -140,18 +140,6 @@ Detail for a single buy order. Includes everything needed to submit a card witho
 
 ---
 
-### POST `/Api/PotentialSubmissions`
-
-Alternative way to get the `acceptAgreement` object (used in current implementation as fallback).
-
-Request: `{ "cards": [] }`
-
-Response: `{ sellerAgreement: { agreement: { id: string, date: string } } }`
-
-> **Note:** Use GET `/Api/Rates/{id}` instead when possible — the agreement is already embedded there.
-
----
-
 ### POST `/Api/Reservations/{reservationId}/ParsedCards`
 
 Validates card codes against a reservation. Called before submission to parse and verify codes.
