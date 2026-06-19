@@ -181,7 +181,11 @@ Response:
 }
 ```
 
-The `submission.groups` from this response is passed directly as the `groups` field in `POST /Api/Submissions`.
+The `submission.groups` from this response is **not** passed directly — each group is missing the `reservation` field required by `POST /Api/Submissions`. Before submitting, inject `{ reservation: { id: reservationId } }` into each group:
+
+```ts
+const groups = parsed.submission.groups.map(g => ({ ...g, reservation: { id: reservationId } }));
+```
 
 ---
 
@@ -211,11 +215,17 @@ Request payload:
 ```json
 {
   "seller": { "id": number, "email": string },
-  "groups": [ ...parsed.submission.groups from ParsedCards response... ]
+  "groups": [
+    {
+      ...group fields from ParsedCards response...,
+      "reservation": { "id": reservationId }
+    }
+  ]
 }
 ```
 
 `seller` comes from `GET /Api/Reservations/{id}` → `reservation.seller`.
+`groups` = ParsedCards `submission.groups` with `reservation: { id }` injected into each group — ParsedCards omits this field but Submissions requires it (`Groups[0].Reservation: The Reservation field is required`).
 No `acceptAgreement` needed in this flow.
 
 Response: submission UUID (`id`), `readyForPayment: boolean`, and groups. Reservation status transitions to `Closed` on success.
