@@ -212,14 +212,18 @@ Request payload:
       "brand": CcBrand,
       "value": number,
       "quantity": number,
-      "reservation": CcReservation
+      "reservation": CcReservation,
+      "cards": [ { "brand": CcBrand, "value": number, "code": string } ]
     }
-  ]
+  ],
+  "acceptAgreement": { "id": string, "date": string }
 }
 ```
 
-`seller` and `reservation` come from `GET /Api/Reservations/{id}`.
-No `acceptAgreement` needed in this flow.
+- `seller` = `ParsedCards.submission.groups[0].offers[0].reservation.seller`
+- `reservation` = `ParsedCards.submission.groups[0].offers[0].reservation` (NOT from GET /Api/Reservations)
+- `groups[].cards` = slice of `ParsedCards.cards` matching each group's quantity (in order)
+- `acceptAgreement` = `ParsedCards.submission.sellerAgreement.agreement`
 
 Response: submission UUID (`id`), `readyForPayment: boolean`, and groups. Reservation status transitions to `Closed` on success.
 
