@@ -247,9 +247,9 @@ API filter values (`status` query param) differ from response names:
 | `Sent` | `Sent` |
 | `Completed` | `Completed` |
 
-- `Waiting` / `Scheduled`: queued, no `id` yet
-- `Sent`: in transit, has `id`
-- `Completed`: received, has `id`
+- `Waiting` / `Scheduled`: queued, no numeric `id` in list response
+- `Sent`: in transit, has numeric `id`
+- `Completed`: received, has numeric `id`
 
 **Note:** With no `status` filter the API does not return all statuses — fetch each status separately and combine.
 
@@ -298,18 +298,28 @@ interface SubmittedCard {
 
 ---
 
-### GET `/Api/Payments/{id}`
+### GET `/Api/Payments/{status}/{buyerId}/{sellerId}/{date}`
 
-Single payment detail. Includes `listings` array linking the payment to individual card submissions.
+Single payment detail with listings. Works for **all statuses** including Waiting/Scheduled.
+
+- `status`: `Scheduled` | `Sent` | `Completed` (use `Scheduled` for Waiting payments)
+- `buyerId`: `paidBy.id` from the payment list response (e.g. `1051` for CardCenter)
+- `sellerId`: your seller ID (e.g. `1056`)
+- `date`: extracted from payment name `P1056-**20260703**` → `2026-07-03`
+
+Example: `GET /Api/Payments/Scheduled/1051/1056/2026-07-03`
+
+**IMPORTANT**: `GET /Api/Payments/{name}` (e.g. `/Api/Payments/P1056-20260703`) returns 404 — the name-based endpoint does not work. Use the path format above.
+
+Response includes `listings` array:
 
 ```ts
 interface PaymentListing {
-  id: number;
   amount: number;
   listing: {
     $type: "SellOffer";
-    id: number;
-    giftCard: { id: number };     // CardCenter's internal gift card ID — matches GiftCard.ccGiftCardId
+    id: number;           // = GiftCard.ccGiftCardId — use THIS for matching, not listing.giftCard.id
+    giftCard: { id: number; code: string };  // different internal ID, NOT stored in our DB
     value: number;
     brand: CcBrand;
     purchasePrice: number;
@@ -325,7 +335,7 @@ interface PaymentListing {
 }
 ```
 
-`listing.giftCard.id` matches `GiftCard.ccGiftCardId`.
+**`listing.id` matches `GiftCard.ccGiftCardId`** — NOT `listing.giftCard.id` (which is a different internal ID).
 
 ---
 
