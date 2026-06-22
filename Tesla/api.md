@@ -13,7 +13,25 @@
 - **Type:** Authorization Code
 - **Client ID:** `b4a07679-8597-452d-a7c0-8a6a6b632c42`
 - **Redirect URI:** `https://penndalton.com/auth/callback`
-- **Scopes:** `openid vehicle_device_data energy_device_data offline_access`
+- **Scopes:** `openid vehicle_device_data vehicle_location vehicle_cmds energy_device_data offline_access`
+
+### Scope notes (verified June 2026)
+- `vehicle_device_data` no longer includes GPS — `vehicle_location` is a separate scope.
+- `vehicle_cmds` is required for signed command endpoints (lock/unlock, charge_start/stop, etc.).
+- **Tesla silently strips scopes not enabled in your developer.tesla.com app.** The
+  consent screen won't show what's missing — you must enable them in the portal first.
+- After enabling scopes you have to revoke the existing grant (or use a fresh
+  account) — Tesla caches the previous scope set and reuses it on re-auth even
+  with `prompt=login consent` in the URL.
+
+### Token JWT decode
+The `access_token` is a JWT. Decode the payload to see what scopes Tesla
+actually granted (vs. what you requested):
+```sh
+jq -r .access_token tokens.json | awk -F. '{print $2}' | tr '_-' '/+' |
+  awk '{l=length($0); m=l%4; if(m) print $0 substr("====",1,4-m); else print}' |
+  base64 -d | jq .scp
+```
 - **Auth endpoint:** `https://auth.tesla.com/oauth2/v3/authorize`
 - **Token endpoint:** `https://auth.tesla.com/oauth2/v3/token`
 
@@ -81,7 +99,57 @@ Response fields:
 
 Part: `1457768-02-H`
 
-### Get Wall Connector Vitals (per-connector live data)
+### Get Energy Site Components (includes wall connector serial numbers)
+```
+GET /api/1/energy_sites/{energy_site_id}/components
+```
+Response includes `wall_connectors` array. Each entry has:
+- `device_id` — UUID used for all API calls
+- `serial_number` — S/N printed on the sticker (field name TBC — check logs)
+- `din` — alternate identifier field
+
+**Known wall connector data for Halton Place (from sticker + API):**
+
+| Side | device_id | Serial (sticker) |
+|------|-----------|-----------------|
+| LEFT (Rivian) | `9ded5c3b-f4ca-4061-b400-9e1591268156` | `B7S23088J08030` |
+| RIGHT (Tesla) | `e4a053b8-66cd-457e-b2bc-bc41005fb45f` | `E4A23172000137` |
+
+### Get Wall Connector Vitals (per-connector live data) — DEPRECATED
+
+The standalone endpoint below was deprecated mid-2026 (returns 404):
+```
+GET /api/1/wall_connectors/{device_id}/vitals     ← 404, do not use
+```
+
+Per-connector data now lives inside `live_status` under `wall_connectors[]`:
+```json
+{
+  "wall_connectors": [
+    {
+      "din": "1457768-02-H--B7S23088J08030",
+      "wall_connector_state": 2,
+      "wall_connector_fault_state": 2,
+      "wall_connector_power": 0,
+      "ocpp_status": 1,
+      "powershare_session_state": 1
+    },
+    {
+      "din": "1457768-02-H--E4A23172000137",
+      "wall_connector_state": 1,
+      "wall_connector_power": 11641.846
+    }
+  ]
+}
+```
+
+- `din` — `{part_number}--{serial}`. Match against your known serial.
+- `wall_connector_state` — `1` = in use, `2` = idle (observed).
+- `wall_connector_power` — watts. No per-leg current or input voltage exposed
+  any more; derive amps as `power / 240` for US split-phase.
+- `session_energy_wh` is not available in this endpoint.
+
+### Legacy per-connector vitals reference (no longer accessible)
 ```
 GET /api/1/wall_connectors/{device_id}/vitals
 ```
@@ -102,9 +170,11 @@ Response fields (if accessible — may require additional fleet permissions):
 
 ### Get Vehicle Data
 ```
-GET /api/1/vehicles/{vin}/vehicle_data?endpoints=charge_state%3Bvehicle_state%3Bclimate_state
+GET /api/1/vehicles/{vin}/vehicle_data?endpoints=charge_state%3Bvehicle_state%3Bclimate_state%3Bdrive_state%3Blocation_data
 ```
-Response: `{ response: { charge_state, vehicle_state, climate_state, ... } }`
+Response: `{ response: { charge_state, vehicle_state, climate_state, drive_state, ... } }`
+
+**Note:** `drive_state` is empty unless `location_data` is also requested (Fleet API gates GPS behind a separate endpoint name).
 
 **charge_state fields:**
 - `battery_level` — percent (0–100)
@@ -121,9 +191,22 @@ Response: `{ response: { charge_state, vehicle_state, climate_state, ... } }`
 - `locked` — bool
 - `odometer` — miles
 
+**Important: asleep car returns a stripped response.** When the vehicle is
+sleeping (`state` ≠ `"online"`), `charge_state` / `vehicle_state` /
+`climate_state` come back mostly empty. If you default missing fields to
+zeros/falses, you'll overwrite real cached values. Cache the last-known-good
+state and restore those fields when `state` != `"online"`.
+
 **climate_state fields:**
 - `is_climate_on` — bool
 - `inside_temp` — Celsius
+
+**drive_state fields (requires `location_data` endpoint):**
+- `latitude` — decimal degrees
+- `longitude` — decimal degrees
+- `heading` — 0-359
+- `speed` — mph (null when parked)
+- `shift_state` — `"P"` | `"R"` | `"N"` | `"D"` | null
 
 ### Wake Vehicle
 ```
@@ -144,3 +227,161 @@ All commands: `POST /api/1/vehicles/{vin}/command/{command_name}`
 | `auto_conditioning_stop` | `{}` |
 
 Response: `{ response: { result: true, reason: "" } }`
+
+---
+
+## Vehicle Command HTTP Proxy
+
+Modern signed-command endpoints (and `fleet_telemetry_config`) reject direct
+calls to the Fleet API with:
+
+```
+"This endpoint must be called through the Vehicle Command HTTP Proxy.
+ Refer to https://developer.tesla.com/docs/fleet-api/fleet-telemetry"
+```
+
+Tesla publishes the proxy as a Go binary: `github.com/teslamotors/vehicle-command`
+→ `cmd/tesla-http-proxy`. It signs outgoing requests with the partner private
+key and forwards to Tesla's API. Run it as a sidecar.
+
+Build flags:
+- `-tls-key` — proxy's own server TLS key (self-signed is fine if local-only)
+- `-cert` — proxy's own server cert
+- `-key-file` — your partner private key (`keys/private-key.pem`)
+- `-port` — listen port (default 4443)
+- `-host` — bind address (use `127.0.0.1` for localhost-only)
+
+Then point your client at `https://localhost:4443/api/1/...` instead of Tesla's
+real Fleet API URL. The proxy passes through unmodified for unsigned endpoints
+and signs the ones that require it.
+
+**Note:** requires Go 1.23+ to build (verified June 2026; older Go versions
+fail because the upstream go.mod was bumped).
+
+---
+
+## Fleet Telemetry
+
+**Status:** Active (push-based vehicle data over WebSocket).
+
+### Wire protocol
+
+- Vehicle establishes a **WebSocket** connection to your registered hostname.
+- Path: `/` (no special path required).
+- Binary protobuf messages — schema: `github.com/teslamotors/fleet-telemetry/protos/vehicle_data.proto`
+- Server only receives; no response messages back to vehicle.
+
+### Payload structure
+
+```protobuf
+message Payload {
+  repeated Datum data = 1;
+  google.protobuf.Timestamp created_at = 2;
+  string vin = 3;
+  bool is_resend = 4;
+}
+
+message Datum {
+  Field key = 1;     // enum, see below for important field numbers
+  Value value = 2;
+}
+```
+
+### Field enum numbers (VERIFIED — Tesla has 260+ fields)
+
+When subscribing in `fleet_telemetry_config`, use the **name** (e.g. `Soc`).
+When decoding payloads, the wire uses the integer tag:
+
+| Field name | Wire tag |
+|------------|----------|
+| ChargeState | 2 |
+| VehicleSpeed | 4 |
+| Odometer | 5 |
+| Soc | 8 |
+| Gear | 10 |
+| Location | 21 |
+| RatedRange | 32 |
+| ChargeLimitSoc | 38 |
+| EstBatteryRange | 40 |
+| IdealBatteryRange | 41 |
+| BatteryLevel | 42 |
+| TimeToFullCharge | 43 |
+| ChargeAmps | 49 |
+| Locked | 59 |
+| VehicleName | 64 |
+| InsideTemp | 85 |
+| OutsideTemp | 86 |
+| DetailedChargeState | 179 |
+| ChargerVoltage | 184 |
+| HvacACEnabled | 196 |
+| ChargeRateMilePerHour | 256 |
+
+Field names that **do not exist** in the Tesla enum (don't use):
+- `ChargingState` (use `ChargeState`)
+- `ChargerActualCurrent` (use `ChargeAmps`)
+- `ChargePortState`
+
+### Value enum types
+Important `Value` oneof fields when decoding:
+- `string_value` (1), `int_value` (2), `float_value` (4), `double_value` (5), `boolean_value` (6)
+- `location_value` (7) — `{ latitude, longitude }`
+- `charging_value` (8) — ChargeState enum (`ChargeStateCharging = 4`)
+- `shift_state_value` (9) — for `Gear`
+- `detailed_charge_state_value` (32) — for `DetailedChargeState`
+
+### Registering a config
+
+```
+POST {proxy_url}/api/1/vehicles/fleet_telemetry_config
+Authorization: Bearer <access_token>
+Content-Type: application/json
+
+{
+  "vins": ["5YJ..."],
+  "config": {
+    "hostname": "tesla-telemetry.your-domain.com",
+    "port": 443,
+    "ca": "",                        // see note below
+    "client_cert": "<PEM contents>", // see note below
+    "fields": {
+      "Soc": { "interval_seconds": 60 },
+      "ChargeLimitSoc": { "interval_seconds": 300 },
+      "DetailedChargeState": { "interval_seconds": 30 }
+    }
+  }
+}
+```
+
+**`ca` field:** the trust bundle Tesla uses to validate your server's TLS cert
+during the WebSocket handshake. If your server is fronted by Cloudflare / a real
+CA-signed cert, send an empty string (`""`) and Tesla uses its default public CA
+bundle. Only pass your own CA when Tesla connects directly to a server presenting
+a cert signed by that CA.
+
+**`client_cert` field:** PEM-encoded cert Tesla will *present* to your server
+during mTLS handshake. Generate a self-signed cert from your own CA.
+
+### Required prerequisites (in order)
+
+1. **Partner account registered.** Generate ECDSA P-256 keypair, host the public
+   key at `https://<your-domain>/.well-known/appspecific/com.tesla.3p.public-key.pem`,
+   POST it to `/api/1/partner_accounts`.
+2. **Vehicle Command HTTP Proxy running** — signed-endpoint requests go through it.
+3. **BLE virtual-key pairing** — the vehicle must have your partner public key
+   enrolled via Tesla mobile app. Without this, registration responds with:
+   ```json
+   {"updated_vehicles": 0, "skipped_vehicles": {"missing_key": ["<VIN>"]}}
+   ```
+   Pair via: `https://tesla.com/_ak/<your-domain>` on a phone with the Tesla
+   app, within BLE range of the vehicle.
+4. **Scopes:** `vehicle_device_data` + `vehicle_cmds` (and `vehicle_location` if
+   subscribing to `Location`).
+
+### Common registration errors
+
+| Error | Meaning |
+|-------|---------|
+| `This endpoint must be called through the Vehicle Command HTTP Proxy` | Not going through tesla-http-proxy |
+| `Unknown field <Name>` | Field name doesn't exist in current Field enum |
+| `Unauthorized missing scopes <scope>` | Token lacks scope; check JWT `scp` claim |
+| `skipped_vehicles.missing_key` | Vehicle hasn't been BLE-paired with your partner key |

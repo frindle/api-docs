@@ -110,34 +110,45 @@ query GetVehicleState($vehicleID: String!) {
   vehicleState(id: $vehicleID) {
     cloudConnection { lastSync isOnline }
     batteryLevel { timeStamp value }        # 0-100 percent
-    distanceToEmpty { timeStamp value }     # miles
+    distanceToEmpty { timeStamp value }     # miles (US vehicles)
     batteryLimit { timeStamp value }        # 0-100 percent
     timeToEndOfCharge { timeStamp value }   # minutes
     chargerState { timeStamp value }        # see values below
     chargerStatus { timeStamp value }
     powerState { timeStamp value }
-    vehicleMileage { timeStamp value }      # miles
+    vehicleMileage { timeStamp value }      # METERS — divide by 1609.344 for miles
     doorFrontLeftLocked { timeStamp value } # "locked" | "unlocked"
     doorFrontRightLocked { timeStamp value }
-    cabinPreconditioningStatus { timeStamp value } # "system_idle" | "system_on" | ...
+    cabinPreconditioningStatus { timeStamp value } # see values below
     chargePortState { timeStamp value }
   }
 }
 ```
 
-**chargerState values:**
+**chargerState values (actively charging states only — do NOT use .includes('charging')):**
 - `disconnected` — not plugged in
 - `not_charging` — plugged in, not charging
+- `charging_ready` — plugged in, ready but not charging (contains "charging" — is NOT active)
+- `charging` — actively charging
+- `charging_active` — actively charging (alternate value)
+- `charge_starting` — contactor closing
 - `charging_ac_1ph` — charging single-phase AC
 - `charging_ac_3ph` — charging three-phase AC
 - `charge_complete` — fully charged
 
 **cabinPreconditioningStatus values:**
 - `system_idle` — climate off
-- `system_on` — climate running
+- `not_available` — no phone key / unavailable (NOT the same as on)
+- `cooling` — AC cooling
+- `heating` — heating
+- `defrost` — defrost
+- `ventilation` — fan only
+- `preconditioning` — preconditioning
 
-**Note:** All values are strings except numeric ones (`batteryLevel`, `distanceToEmpty`, etc.).  
-`distanceToEmpty` and `vehicleMileage` are in **miles** — multiply by 1.60934 for km.
+**Unit notes:**
+- `distanceToEmpty` — miles (US vehicles)
+- `vehicleMileage` — **meters** (confirmed: ~27k mi shows as ~43M raw) — divide by 1609.344
+- All other numeric fields — native units as labeled
 
 ---
 
