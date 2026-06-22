@@ -121,6 +121,7 @@ query GetVehicleState($vehicleID: String!) {
     doorFrontRightLocked { timeStamp value }
     cabinPreconditioningStatus { timeStamp value } # see values below
     chargePortState { timeStamp value }
+    chargerDerateStatus { timeStamp value }         # active throttling reason
   }
 }
 ```
@@ -135,6 +136,13 @@ query GetVehicleState($vehicleID: String!) {
 - `charging_ac_1ph` — charging single-phase AC
 - `charging_ac_3ph` — charging three-phase AC
 - `charge_complete` — fully charged
+
+**chargerDerateStatus values:**
+- Empty string / `no_derate` / `none` / `inactive` / `normal` — not throttled
+- Non-empty other value — vehicle is being throttled. Specific strings aren't
+  publicly documented; capture the raw value when it occurs. Reasons commonly
+  include thermal, battery temperature, voltage issues. Source: `bretterer/home-assistant-rivian`
+  exposes the raw value as a sensor without an enum mapping.
 
 **cabinPreconditioningStatus values:**
 - `system_idle` — climate off
