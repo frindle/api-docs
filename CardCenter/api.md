@@ -146,9 +146,17 @@ Validates card codes against a reservation. Called before submission to parse an
 
 Request:
 ```json
-{ "text": "CODE1\nCODE2\nCODE3\nCODE4" }
+{ "text": "CODE1,PIN1\nCODE2,PIN2\nCODE3,PIN3\nCODE4,PIN4" }
 ```
-(Newline-separated card codes)
+
+**Format:** newline-separated entries, each entry is `<code>,<pin>` comma-separated. Confirmed 2026-06-27 against CC web UI request body. For brands that don't have a PIN, the line is just `<code>`.
+
+**Validation errors** (status 400, JSON envelope):
+
+| `errors.Text[0]` | Meaning |
+|---|---|
+| `Line N: Valid <brand> code and PIN not found.` | The line has no PIN (we sent just `<code>`) but the brand requires one |
+| `Line N: Valid <brand> code not found.` | CC parsed code+PIN but the code itself doesn't match the brand's pattern. Most commonly: wrong separator (we used a space, CC needs a comma) |
 
 Response:
 ```json
