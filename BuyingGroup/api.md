@@ -200,8 +200,35 @@ Lists active (and possibly historical) commitments for the authenticated buyer.
 | `expiry_day` | `MM-DD-YYYY` deadline for delivery |
 | `price` | Per-item price string (USD) |
 | `total` | `price × count` string |
-| `status` | `ACTIVE` while open; other values TBD |
+| `status` | See status values below |
 | `tracking_linked_required` | If true, BG expects tracking link before counting fulfilled |
+
+**Status values** (confirmed 2026-06-26):
+
+| Value | Meaning | Has open slots? |
+|-------|---------|-----------------|
+| `ACTIVE` | Open, no slots shipped yet | Yes (if `count > assigned`) |
+| `PARTIALLY FULFILLED` | At least one slot shipped, others still open | Yes (if `count > assigned`) |
+| `FULFILLED` | All slots delivered | No |
+| `VOIDED` | BG cancelled the commitment (deal expired, removed, etc.) | No, `count` is set to `0` |
+
+**Gotcha:** BG flips a commitment to `PARTIALLY FULFILLED` as soon as the FIRST slot ships, even when 4 of 10 slots are still open and linkable. Don't filter on `status === 'ACTIVE'` alone — use `OPEN_STATUSES = { ACTIVE, PARTIALLY FULFILLED }` or `remaining > 0`.
+
+---
+
+### Commitment mutations (extension API spy)
+
+Endpoints that the BG site's UI hits when the user edits commitment state. Our extension API spy watches for successful (2xx) responses on these and triggers `/api/buyinggroup/sync-commitments` so local state stays fresh without manual "Sync from BG" clicks.
+
+| Endpoint | When fired |
+|----------|------------|
+| `POST /v1/commitment/edit_commitment` | User raises/lowers `count` on an existing commitment |
+| `POST /v1/commitment/create_commitment` | User opts in to a new deal |
+| `POST /v1/commitment/delete_commitment` | User removes a commitment |
+| `POST /v1/commitment/update_commitment` | Generic update (used by some flows) |
+| `POST /v1/commitment/cancel_commitment` | User cancels a commitment |
+
+The spy debounces these by ~5s so a rapid drag-edit (e.g. `3 → 6 → 3` in 2 seconds) coalesces into one sync. Auth is the BG site's own cookie session; we don't call these directly from the server.
 
 ---
 

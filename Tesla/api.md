@@ -225,8 +225,18 @@ All commands: `POST /api/1/vehicles/{vin}/command/{command_name}`
 | `door_unlock` | `{}` |
 | `auto_conditioning_start` | `{}` |
 | `auto_conditioning_stop` | `{}` |
+| `trigger_homelink` | `{}` (no body) — fires the car's built-in HomeLink RF transmitter |
 
 Response: `{ response: { result: true, reason: "" } }`
+
+**`trigger_homelink` notes** (researched 2026-06-26):
+
+- Triggers the vehicle's HomeLink module, which transmits the same 315 MHz / 433 MHz RF signal a standard garage-door remote sends. Any HomeLink-paired opener responds — including MyQ-equipped ones — so no MyQ API account is needed for control.
+- Requires the door to be **paired to the car's HomeLink module** first (one-time setup at the car: hold the HomeLink button while pressing the original remote until indicator confirms).
+- Requires `vehicle_cmds` scope and the signed-command flow (so virtual key pairing via the BLE-at-the-car procedure must be done).
+- Errors `not_supported` on vehicles without HomeLink hardware (some Model 3 base trims).
+- **One-way only** — HomeLink can transmit but can't read door state. Pair with MyQ status polling or a tilt sensor if you need to know whether the door actually opened.
+- Vehicle must be within RF range of the door (~50 ft / 15 m line-of-sight). If the car is parked off-site the call succeeds at the API layer but the door doesn't receive the signal.
 
 ---
 

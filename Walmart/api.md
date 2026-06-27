@@ -40,6 +40,17 @@ Order detail data is embedded in `<script id="__NEXT_DATA__">` as JSON.
 
 **Note:** The `groups` key name varies (e.g., `groups_v2`, `groups_v3`). Match via `Object.keys(order).find(k => k.startsWith('groups_'))`.
 
+## Delivery photo
+
+When the carrier captures a proof-of-delivery image, the order detail page renders:
+
+- Trigger button (always present on delivered orders): `button[data-automation-id="view-photo-link"]` → "View delivery photo".
+- Image element: `img[alt="Proof of delivery location"]` (also matched by `img[src*="/delivery-photo/"]`).
+- URL: signed proxy at `https://receipts-query.edge.walmart.com/delivery-photo/<base64-id>.jpeg`.
+- TTL: signed and expiring (similar to Amazon's S3 link, exact lifetime not measured). Download server-side immediately rather than storing the URL.
+
+The image is usually present in the SSR HTML alongside the button. If not, the modal-trigger button is present but the `<img>` is rendered only after the user clicks — in that case the static fetch won't capture it.
+
 ## Sync Behavior
 
 - Syncs back 30 days, or to `walmartLastSync - 48 hours`, whichever is earlier
