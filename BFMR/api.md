@@ -424,6 +424,44 @@ Submit or update tracker rows (used to set tracking numbers).
 
 **Flow:** GET tracker rows → find row where `order_id` matches our order number → POST the full row back with `tracking_number` set.
 
+**Split-shipment submission** (qty > 1 with multiple tracking numbers): send N entries in `tracker_data`, all sharing the same `id`/`PID`/`my_tracker_id`/`deal_id`/`item_id`/`order_id`, each with `qty: 1`, a distinct `rowIndex: 0..N-1`, and its own `tracking_number`. The minimal field set works (no need to echo every column from the GET row).
+
+```json
+{
+  "tracker_data": [
+    {
+      "qty": 1,
+      "id": 1485466,
+      "my_tracker_id": 4570045,
+      "deal_id": 9375,
+      "item_id": 11175,
+      "type": "purchased",
+      "status": "purchased",
+      "rowIndex": 0,
+      "order_id": "114-6759124-7158630",
+      "tracking_number": "9339589725265623497482"
+    },
+    {
+      "qty": 1,
+      "id": 1485466,
+      "my_tracker_id": 4570045,
+      "deal_id": 9375,
+      "item_id": 11175,
+      "type": "purchased",
+      "status": "purchased",
+      "rowIndex": 1,
+      "order_id": "114-6759124-7158630",
+      "tracking_number": "9339589725265624883161"
+    }
+  ],
+  "dateRange": { "start": "2026-03-28", "end": "2026-06-28" }
+}
+```
+
+Response: `{ success: true, data: { invalid_reservations: [], deal_suggestions: [], delete_shipment_deadline_warning: false } }`. After success, re-GET shows N separate rows with distinct `SID`s and `status: "shipped"`.
+
+Lookup-before-submit pattern observed in the wild: `GET /api/my-tracker?...&filter_tab=all&search=<last4OfOrderNumber>` returns the matching reservation row; pull `id`/`my_tracker_id`/`deal_id`/`item_id` from there.
+
 ---
 
 #### `PUT /api/my-tracker/action` (Web App API)
