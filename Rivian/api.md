@@ -173,8 +173,71 @@ This makes commands complex to implement without the BLE key pair. The HA integr
 
 ---
 
+## Full vehicleState field list (RivDocs)
+
+Fields available beyond the ones documented above (source: [RivDocs GetVehicleState](https://rivian-api.kaedenb.org/app/vehicle-info/vehicle-state/)):
+
+**Location (GNSS):** `gnssLocation { latitude longitude timeStamp }`, `gnssSpeed { value }`, `gnssAltitude { value }`, `gnssError { positionHorizontal positionVertical speed bearing }`
+
+**Battery / charging:** `batteryLevel`, `batteryLimit`, `batteryCapacity`, `batteryHvThermalEvent`, `batteryHvThermalEventPropagation`, `chargerState`, `chargerStatus`, `chargerDerateStatus`, `remoteChargingAvailable`, `timeToEndOfCharge`, `distanceToEmpty`, `rangeThreshold`, `chargePortState`
+
+**Doors / windows / closures:** `doorFrontLeftLocked/Closed`, `doorFrontRightLocked/Closed`, `doorRearLeftLocked/Closed`, `doorRearRightLocked/Closed`, `windowFrontLeft/RightClosed`, `windowRearLeft/RightClosed`, plus corresponding `*Calibrated` fields, `closureFrunkLocked/Closed/NextAction`, `closureLiftgateLocked/Closed/NextAction`, `closureSideBinLeft/Right...`, `closureTailgateLocked/Closed/NextAction`, `closureTonneauLocked/Closed`, `gearGuardLocked`
+
+**Climate:** `cabinClimateInteriorTemperature`, `cabinClimateDriverTemperature`, `cabinPreconditioningStatus`, `cabinPreconditioningType`, `petModeStatus`, `petModeTemperatureStatus`, `defrostDefogStatus`, `steeringWheelHeat`, `seatFrontLeft/RightHeat`, `seatRearLeft/RightHeat`, `seatFrontLeft/RightVent`
+
+**Vehicle:** `powerState`, `gearStatus`, `vehicleMileage`, `alarmSoundStatus`, `wiperFluidState`, `brakeFluidLow`, `driveMode`, `serviceMode`
+
+**Tires:** `tirePressureStatusFrontLeft/Right`, `tirePressureStatusRearLeft/Right`, plus corresponding `tirePressureStatusValid*` flags
+
+**OTA:** `otaCurrentVersionNumber/Week/Year/GitHash`, `otaAvailableVersionNumber/Week/Year/GitHash`, `otaDownloadProgress`, `otaInstallDuration`, `otaInstallProgress`, `otaInstallReady`, `otaInstallTime`, `otaInstallType`, `otaStatus`, `otaCurrentStatus`
+
+**Gear Guard:** `gearGuardVideoStatus`, `gearGuardVideoMode`, `gearGuardVideoTermsAccepted`
+
+**Not exposed:** 12V battery state — no publicly documented field.
+
+---
+
+## Charging derate reasons
+
+`chargerDerateStatus.value` returns a raw string when active. Documented no-op values: empty string, `no_derate`, `none`, `inactive`, `normal`. Any other value = active throttling. **Reason strings are not documented publicly** — capture the raw value when it fires. Community expectation: thermal reasons (handle temperature, battery temp, cable) and voltage-related reasons. Verified by `bretterer/home-assistant-rivian` which exposes the field as a raw string sensor with no enum map.
+
+Similarly, `batteryHvThermalEvent` and `batteryHvThermalEventPropagation` return non-empty strings during HV battery thermal excursions. Values undocumented; capture raw.
+
+---
+
+## WebSocket subscriptions
+
+Real-time push endpoint (avoids polling entirely):
+`wss://api.rivian.com/gql-consumer-subscriptions/graphql`
+
+Use standard GraphQL-over-WebSocket protocol. Requires the same `Csrf-Token` / `A-Sess` / `U-Sess` headers as GraphQL POST. Subscription operations mirror `vehicleState` query shape. Community projects (`bretterer/*`) implement this for near-realtime updates. Not currently used by ev-dashboard; polling with backoff is sufficient.
+
+---
+
+## Rate limiting
+
+Rivian does not publish rate limits. Throttling responses are **opaque** — errors do not indicate whether they're throttling or genuine failure. Community-tested backoff (from `bretterer`):
+
+> "I use exponential backoffs to the point where I would stop seeing errors. The errors are really really opaque and don't tell you if it's throttling or not. I do 15, 30, 60, 120, 240 minutes."
+
+ev-dashboard uses: 15 → 30 → 60 → 120 → 240 min on consecutive `fetchRivianVehicleState` errors, reset on first success. Interactive command calls are not backed off — the user is present and will retry manually if needed.
+
+---
+
+## Session lifetime
+
+No refresh mutation is documented. Tokens appear to work for ~90 days before failing with 401. ev-dashboard treats the token's `savedAt` timestamp as the session start and:
+
+1. Sets a `rivian_reauth_due_soon` flag at day 83 (7 days before assumed expiry).
+2. Sets `rivian_reauth_required` at day 90.
+3. Also sets `rivian_reauth_required` on any 401 from the gateway, regardless of age.
+
+User must re-run the login flow (email + password + OTP) to refresh. Consider surfacing a "Sign in to Rivian" admin route ahead of day 90.
+
+---
+
 ## Notes
 - No public/official API — reverse engineered from iOS app (v707)
 - `apollographql-client-name` header is required or requests are rejected
-- Tokens appear session-based; no documented expiry time
-- Source references: `bretterer/rivian-python-client`, `bretterer/home-assistant-rivian`
+- Tokens appear session-based; ~90-day lifetime observed; no documented refresh
+- Source references: `bretterer/rivian-python-client`, `bretterer/home-assistant-rivian`, [`rivian-api.kaedenb.org`](https://rivian-api.kaedenb.org/)
