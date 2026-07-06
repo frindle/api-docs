@@ -329,7 +329,9 @@ interface TrackerRow {
   order_id: string;        // retailer order number — match against Order.orderNumber
   tracking_number: string; // empty string if not yet set
   qty: string;
-  status: string;          // "reserved" | "purchased" | "processed" | "paid" etc.
+  status: string;          // ⚠ LAGS — see status note below
+  date_processed?: string; // set when the item is processed (authoritative)
+  date_paid?: string;      // set when paid (authoritative)
   reserved_at: string;     // "MM/DD/YYYY"
   retail_price: number;
   sub_total: number;
@@ -344,6 +346,30 @@ interface TrackerRow {
   force_delete_shipment_after_deadline?: number;
 }
 ```
+
+#### ⚠ Status lifecycle — the `status` string lags; derive from fields
+
+Package lifecycle (least → most advanced):
+`(reserved/purchased) → shipped → pkg received → processed → paid`
+
+**The `status` string does not reliably reflect the current stage** — an
+item can show `shipped` on the tracker while BFMR's site already counts it
+as processed, or `purchased` when it's really shipped. The authoritative
+signals are the field values, so derive status from them and only fall back
+to the string when none has fired:
+
+| Real status | Signal |
+|-------------|--------|
+| paid | `date_paid` present |
+| processed | `date_processed` present |
+| pkg received | `qty_received > 0` |
+| shipped | `tracking_number` present |
+| (earlier) | fall back to `status` string |
+
+An **order** spanning multiple items is only truly "processed" when *every*
+active item is processed — roll up on the least-advanced item, not the most,
+or the order reads Processed while items are still shipping. resell-tracker
+implements this as `deriveBfmrStatus()` in `lib/bfmr.ts`.
 
 ---
 
