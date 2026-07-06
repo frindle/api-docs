@@ -23,6 +23,14 @@
 - After enabling scopes you have to revoke the existing grant (or use a fresh
   account) — Tesla caches the previous scope set and reuses it on re-auth even
   with `prompt=login consent` in the URL.
+- **`vehicle_location` refusal (open issue, July 2026):** Tesla will not grant
+  `vehicle_location` on our app (client ID above) no matter what — portal
+  checkbox enabled, re-auth, incognito, scope toggle off/on, full app revoke
+  all tried; the JWT `scp` claim always comes back with only the legacy four
+  scopes. Consequence: requesting the `location_data` endpoint 403s the whole
+  `vehicle_data` call, so drop it from `endpoints=` (ev-dashboard does).
+  Path forward is a Tesla developer-support ticket, then Fleet Telemetry
+  `Location` once granted.
 
 ### Token JWT decode
 The `access_token` is a JWT. Decode the payload to see what scopes Tesla
@@ -103,7 +111,13 @@ Part: `1457768-02-H`
 ```
 GET /api/1/energy_sites/{energy_site_id}/components
 ```
-Response includes `wall_connectors` array. Each entry has:
+**⚠️ 404s on many energy sites as of mid-2026** — Tesla appears to have
+removed it for a lot of sites (including ours). Treat a 404 as permanent
+for that site and stop calling (ev-dashboard sticky-disables it per
+process). Wall-connector serials must then come from config/stickers;
+per-connector live data comes from `live_status` (below).
+
+Response (when it works) includes `wall_connectors` array. Each entry has:
 - `device_id` — UUID used for all API calls
 - `serial_number` — S/N printed on the sticker (field name TBC — check logs)
 - `din` — alternate identifier field
