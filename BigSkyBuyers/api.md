@@ -6,7 +6,40 @@ BigSkyBuyers uses **tRPC** served from their Next.js app. All API calls go to `/
 
 ## Authentication
 
-Cookie-based. The browser's session cookies are sent automatically via `credentials: "include"`. No explicit token management needed.
+Cookie-based session, issued by **better-auth** with the **email-OTP** plugin.
+Two calls, no password:
+
+### 1. Send login code
+```
+POST /api/auth/email-otp/send-verification-otp
+Content-Type: application/json
+
+{ "email": "you@example.com", "type": "sign-in" }
+```
+→ `200` and emails a 6-digit code. (Observed 2026-07-06.)
+
+### 2. Verify code → session cookie
+```
+POST /api/auth/sign-in/email-otp
+Content-Type: application/json
+
+{ "email": "you@example.com", "otp": "123456" }
+```
+→ `200` with `Set-Cookie` session token(s) (better-auth `*session_token*`).
+Capture the `name=value` pairs and send them as `Cookie:` on subsequent
+tRPC calls.
+
+**Captcha caveat:** the public `/auth/signin` page also fires a Cloudflare
+Turnstile check via `POST /api/auth/verify-captcha` (token format `1.xxx`,
+returns `{"success":true}`). In captures the two auth POSTs above succeeded
+**without** a captcha header, so a pure server-side flow works — but if
+BigSky later enforces Turnstile on the auth API these will start 403ing and
+a browser-captured cookie is the only fallback. The resell-tracker
+`bigsky_cookie` setting accepts either source.
+
+Analytics noise to ignore on the dashboard load: repeated
+`POST /analytics/api/send` (umami) and duplicate `/_next/data/.../*.json`
+prefetches — neither is part of the API surface.
 
 ## Endpoints
 
