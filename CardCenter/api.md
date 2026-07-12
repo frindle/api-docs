@@ -247,6 +247,8 @@ Query params: `paidTo`, `paidBy`, `status`, `batch`, `purchaseOrder`, `recipient
 
 Payment statuses (response `status` field): `Waiting` → `Sent` → `Completed`
 
+**Status transitions are manual on CC's side and lag badly** (confirmed 2026-07-11): payments routinely sit in `Waiting` past their `receivedOn` date even after the money has arrived, and CC sometimes reschedules (`receivedOn` moves later). Don't treat `Waiting` as "not paid" — treat a `Waiting` payment as paid once its `receivedOn` date has passed.
+
 API filter values (`status` query param) differ from response names:
 
 | Response status | Filter param value |
