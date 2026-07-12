@@ -310,7 +310,7 @@ interface SubmittedCard {
 
 ### GET `/Api/Payments/{status}/{buyerId}/{sellerId}/{date}`
 
-Single payment detail with listings. Works for **all statuses** including Waiting/Scheduled.
+Single payment detail with listings. **Only reliable for Waiting/Scheduled payments.** Confirmed 2026-07-12: returns **404 for every Completed payment** (`/Api/Payments/Completed/1051/1056/2023-10-31` etc. all 404). For Sent/Completed payments use `GET /Api/Payments/{id}` with the numeric `id` from the list response instead — Waiting payments have no `id`, so this composite URL is the only detail path for those.
 
 - `status`: `Scheduled` | `Sent` | `Completed` (use `Scheduled` for Waiting payments)
 - `buyerId`: `paidBy.id` from the payment list response (e.g. `1051` for CardCenter)
