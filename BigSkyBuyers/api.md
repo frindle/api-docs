@@ -29,6 +29,13 @@ Content-Type: application/json
 Capture the `name=value` pairs and send them as `Cookie:` on subsequent
 tRPC calls.
 
+**Session rotation:** better-auth rotates session tokens on every authenticated
+response — each reply includes fresh `Set-Cookie` headers with extended expiry.
+The browser handles this automatically, but server-side callers must capture and
+persist the updated cookies after each request or the session dies within ~1 hour.
+The two cookies are `__Secure-better-auth.session_token` (~12h expiry) and
+`__Secure-better-auth.session_data` (~10d expiry). Both are required.
+
 **Captcha caveat:** the public `/auth/signin` page also fires a Cloudflare
 Turnstile check via `POST /api/auth/verify-captcha` (token format `1.xxx`,
 returns `{"success":true}`). In captures the two auth POSTs above succeeded
@@ -155,5 +162,8 @@ Seen in the same batched dashboard-load call (`payment.getUserPayments,tracking.
 
 | File | Purpose |
 |------|---------|
-| `lib/bigsky.ts` | Auth + tracking submission |
+| `lib/bigsky.ts` | Auth, tracking submission, server-side data fetching (fetchScanItems, fetchNotCheckedInTracking), session cookie refresh |
+| `lib/bigskyHealth.ts` | Periodic session liveness check — validates cookie, warns on approaching expiry, flags dead sessions |
+| `app/api/bigsky/sync-orders/route.ts` | Sync endpoint — accepts extension-pushed groups or fetches server-side (fetch:true). Per-item value splitting when one tracking spans multiple orders |
+| `lib/autoSync.ts` | Scheduled sync loop — calls sync-orders with fetch:true every 6h for users with bigsky_cookie |
 | `src/content/bigskybuyers.ts` | Browser extension content script — fetches scan history and not-checked-in tracking, pushes to `/api/bigsky/sync-orders` |
