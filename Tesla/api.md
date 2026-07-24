@@ -462,3 +462,32 @@ processing (no log line unless `TELEMETRY_DEBUG=1` — success is quiet, only
 decode errors/VIN mismatches log by default). The vehicle only opens this
 connection while awake; a sleeping vehicle produces zero connection attempts,
 which is expected, not a bug.
+
+### Telemetry field subscription — what actually needs the REST API still (2026-07-25)
+
+The Fleet Telemetry `fields` config in `fleet_telemetry_config` is opt-in per
+field — the WS push only delivers what you explicitly subscribed to, nothing
+more. As of 2026-07-25, `ev-dashboard/scripts/register-telemetry.sh`
+subscribes to: `Soc, ChargeLimitSoc, DetailedChargeState, TimeToFullCharge,
+RatedRange, Odometer, Locked, Gear, Location, HvacACEnabled, ChargeAmps,
+ChargeRateMilePerHour, ChargerVoltage`.
+
+Two things this does **not** eliminate:
+- **Wall Connector / Energy Site `live_status`** (kW draw, per-connector amps,
+  solar/grid/battery power) is a completely separate API
+  (`/api/1/energy_sites/{id}/live_status`), not part of vehicle telemetry at
+  all — no field subscription touches this, it always needs REST polling.
+- **Commands** (lock/unlock, charge start/stop, honk, flash) are always
+  REST/vehicle-command-proxy calls — telemetry is receive-only.
+
+`ChargeState`/`DetailedChargeState` share one enum (`protos/vehicle_data.proto`):
+`0 Unknown, 1 Disconnected, 2 NoPower, 3 Starting, 4 Charging, 5 Complete,
+6 Stopped`. `isCharging` is `v === 4`; `isPluggedIn` is `v !== 0 && v !== 1`
+(anything except Unknown/Disconnected still means a cable is connected —
+NoPower/Stopped/Complete all count). Confirmed via the actual proto file, not
+guessed — worth checking there directly if another derived boolean is needed
+from this field later.
+
+Re-running `register-telemetry.sh` after editing its `fields` block is
+required to push the new subscription to Tesla — it's a live API call
+(`fleet_telemetry_config`), not something a container redeploy alone applies.
