@@ -472,6 +472,34 @@ subscribes to: `Soc, ChargeLimitSoc, DetailedChargeState, TimeToFullCharge,
 RatedRange, Odometer, Locked, Gear, Location, HvacACEnabled, ChargeAmps,
 ChargeRateMilePerHour, ChargerVoltage`.
 
+## Wall Connector local API (not Fleet API — separate discovery, 2026-07-25)
+
+Gen 3 Wall Connectors run their own **unauthenticated local HTTP API**,
+reachable directly on the LAN, with zero Tesla cloud/Fleet API quota cost:
+
+- `GET http://<wall-connector-ip>/api/1/vitals` — the useful one. Field
+  names aren't officially documented by Tesla but are stable and
+  community-confirmed (same ones the Home Assistant `tesla_wall_connector`
+  integration uses): `contactor_closed` (bool, actually delivering power),
+  `vehicle_connected` (bool, plugged in), `vehicle_current_a`,
+  `voltageA_v`/`voltageB_v`/`voltageC_v`, `session_energy_wh` (this is
+  **not** exposed at all in the cloud `live_status` response — a strict
+  improvement, not just a quota-free substitute).
+- `GET http://<ip>/api/1/lifetime`, `GET http://<ip>/api/1/version` also
+  exist (lifetime energy stats, firmware) — not currently consumed.
+- **Load-sharing pairs**: when two Wall Connectors are configured to share a
+  circuit's load, only one unit is reachable on the home LAN — the pair
+  communicates over a private link between the units themselves, not
+  something exposed over HTTP. The other unit's data still has to come from
+  Tesla's cloud `live_status` (which does report both, matched by DIN,
+  regardless of local network topology). Confirmed 2026-07-25, not
+  speculation — this is why `ev-dashboard`'s per-side `localIp` config field
+  is optional per-connector, not both-or-nothing.
+- Implementation: `ev-dashboard/lib/tesla.ts`'s `fetchWallConnectorVitalsLocal`
+  hits this directly when a connector's config has `localIp` set, falling
+  back to the cloud path if the local fetch fails (device rebooting, etc.)
+  or `localIp` is blank.
+
 Two things this does **not** eliminate:
 - **Wall Connector / Energy Site `live_status`** (kW draw, per-connector amps,
   solar/grid/battery power) is a completely separate API
