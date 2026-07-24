@@ -18,6 +18,18 @@
 ### Scope notes (verified June 2026)
 - `vehicle_device_data` no longer includes GPS — `vehicle_location` is a separate scope.
 - `vehicle_cmds` is required for signed command endpoints (lock/unlock, charge_start/stop, etc.).
+
+### API usage quota is monthly, not daily (confirmed 2026-07-24)
+Tesla emails a usage-threshold alert (seen at 80%) against a **monthly** call
+quota for the developer app, not a daily/hourly one. A polling design that
+looks fine on a per-day basis (e.g. 30s cadence only while a wall connector
+is actively charging) can still burn through the monthly allowance fast if
+sustained for hours every night — a multi-hour overnight TOU charge session
+polled at 30s the whole time was the actual cause here. Practical
+implication: back off polling frequency once a state has been stable for a
+while (see `ev-dashboard/lib/tesla.ts`'s `LIVE_STATUS_SUSTAINED_ACTIVE_MS` —
+drops to a 2-min cadence after 15 continuous minutes of active charging),
+don't just optimize for "fast at the moment something changes."
 - **Tesla silently strips scopes not enabled in your developer.tesla.com app.** The
   consent screen won't show what's missing — you must enable them in the portal first.
 - After enabling scopes you have to revoke the existing grant (or use a fresh
