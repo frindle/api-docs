@@ -470,7 +470,34 @@ field — the WS push only delivers what you explicitly subscribed to, nothing
 more. As of 2026-07-25, `ev-dashboard/scripts/register-telemetry.sh`
 subscribes to: `Soc, ChargeLimitSoc, DetailedChargeState, TimeToFullCharge,
 RatedRange, Odometer, Locked, Gear, Location, HvacACEnabled, ChargeAmps,
-ChargeRateMilePerHour, ChargerVoltage`.
+ChargeRateMilePerHour, ChargerVoltage, ACChargingPower`.
+
+`ChargeAmps`/`ChargerVoltage`/`ACChargingPower` are confirmed to be the
+**actual** delivered current/voltage/power, not a setting or request —
+per a `teslamotors/fleet-telemetry` GitHub maintainer (issue #127):
+`ChargeAmps` = `charger_actual_current`, `ChargerVoltage` =
+`charger_voltage` in the polling API's terms. `ChargeCurrentRequest`/
+`ChargeCurrentRequestMax` are the separate setting fields, not used here.
+
+`ChargeState`/`DetailedChargeState` share one enum
+(`protos/vehicle_data.proto`): `0 Unknown, 1 Disconnected, 2 NoPower,
+3 Starting, 4 Charging, 5 Complete, 6 Stopped`. `isCharging` is `v === 4`;
+`isPluggedIn` is `v !== 0 && v !== 1` (anything except Unknown/Disconnected
+still means a cable is connected).
+
+**End state (2026-07-25): Tesla's side needs zero ongoing REST API calls
+for its own charging picture.** `chargePercent`, `chargeLimit`, `isCharging`,
+`isPluggedIn`, `chargeRateMph`, `chargerActualCurrentA`, `chargerVoltage`,
+`chargerPowerKw` are all telemetry-sourced now, and `ev-dashboard`'s Wall
+Connector display + session-kWh tracking for Tesla's side is synthesized
+directly from this telemetry state rather than also calling the Wall
+Connector's own `live_status`/local API to "confirm" the same thing. The
+only genuinely un-replaceable REST usage left: Fleet API commands
+(lock/unlock, charge start/stop — telemetry is receive-only), and Rivian's
+side of the Wall Connector data (Rivian has no comparable telemetry push,
+so it still needs a live_status/local-API poll — see `ev-dashboard/app/api/
+dashboard/route.ts`'s `peekRivianJustStartedCharging`, an event-driven
+replacement for a blind "poll fast near midnight" clock guess).
 
 ## Wall Connector local API (not Fleet API — separate discovery, 2026-07-25)
 
