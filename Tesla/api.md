@@ -292,8 +292,21 @@ fail because the upstream go.mod was bumped).
 
 - Vehicle establishes a **WebSocket** connection to your registered hostname.
 - Path: `/` (no special path required).
-- Binary protobuf messages — schema: `github.com/teslamotors/fleet-telemetry/protos/vehicle_data.proto`
 - Server only receives; no response messages back to vehicle.
+- **CONFIRMED (July 2026): the binary WS message is NOT raw protobuf.** The
+  vehicle wraps it in a Google **FlatBuffers** envelope
+  (`FlatbuffersEnvelope` → `FlatbuffersStream`, per the generated Go bindings
+  in `teslamotors/fleet-telemetry`'s `messages/tesla/*.go`), and the actual
+  protobuf `Payload` bytes live inside that envelope's `Payload` byte-vector
+  field. You must decode the FlatBuffers wrapper first, then hand the
+  extracted byte slice to your protobuf decoder. The `vin` field on the
+  protobuf `Payload` isn't reliably populated in this wire format — the real
+  VIN is in the FlatBuffers envelope's `DeviceId` field instead.
+  Verified byte-for-byte against a real captured payload; see
+  `ev-dashboard/server/telemetry-server.js` (`extractStreamMessage`) for a
+  working decoder using the `flatbuffers` npm package's `ByteBuffer` export
+  (note: it's `require('flatbuffers').ByteBuffer`, not a nested `.flatbuffers`
+  namespace — easy to get wrong).
 
 ### Payload structure
 
@@ -377,10 +390,16 @@ Content-Type: application/json
 ```
 
 **`ca` field:** the trust bundle Tesla uses to validate your server's TLS cert
-during the WebSocket handshake. If your server is fronted by Cloudflare / a real
-CA-signed cert, send an empty string (`""`) and Tesla uses its default public CA
-bundle. Only pass your own CA when Tesla connects directly to a server presenting
-a cert signed by that CA.
+during the WebSocket handshake. **UPDATE (July 2026): Tesla's API now rejects
+an empty string here with `"ca is not a valid PEM"`** — the old "send `""` to
+fall back to the public trust store" behavior no longer works, even behind
+Cloudflare with a publicly-signed cert. Fetch the actual chain your host
+presents and submit the intermediate+root (strip the leaf):
+```sh
+openssl s_client -connect "$HOST:443" -servername "$HOST" -showcerts </dev/null 2>/dev/null \
+  | awk '/-----BEGIN CERTIFICATE-----/{n++} n>1'
+```
+Pass that as the `ca` string. Confirmed working (`{"response":{"updated_vehicles":1}}`).
 
 **`client_cert` field:** PEM-encoded cert Tesla will *present* to your server
 during mTLS handshake. Generate a self-signed cert from your own CA.
@@ -409,3 +428,25 @@ during mTLS handshake. Generate a self-signed cert from your own CA.
 | `Unknown field <Name>` | Field name doesn't exist in current Field enum |
 | `Unauthorized missing scopes <scope>` | Token lacks scope; check JWT `scp` claim |
 | `skipped_vehicles.missing_key` | Vehicle hasn't been BLE-paired with your partner key |
+
+### Owner vs. driver account (CONFIRMED, July 2026)
+
+Virtual key BLE pairing (and granting the "Connect Tesla" OAuth authorization
+that lets a partner app control the vehicle) can only be completed by the
+Tesla account that actually **owns** the vehicle. A driver-permission account
+on the same vehicle can read data and send commands once already paired, but
+cannot itself perform the pairing/authorize flow — the owner has to log into
+Tesla's own hosted OAuth page (`https://auth.tesla.com/oauth2/v3/authorize`)
+and approve it themselves, and do the BLE pairing themselves via
+`https://tesla.com/_ak/<your-domain>`. There's no "add a driver to my
+developer account" workaround — the developer.tesla.com app registration is
+unrelated to who's allowed to grant this on any individual vehicle.
+
+### Live confirmation of a working setup
+
+Once telemetry is actually flowing, `docker logs` on the receiver shows
+`[telemetry] connection from <car's IP>` followed by silent successful
+processing (no log line unless `TELEMETRY_DEBUG=1` — success is quiet, only
+decode errors/VIN mismatches log by default). The vehicle only opens this
+connection while awake; a sleeping vehicle produces zero connection attempts,
+which is expected, not a bug.
