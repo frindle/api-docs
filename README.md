@@ -11,6 +11,7 @@ Notes on third-party APIs used across projects.
 - [BuyingGroup](BuyingGroup/api.md) — buying group platform (Django SimpleJWT, POST-based)
 - [CardCenter](CardCenter/api.md) — gift card resale platform (Bearer token)
 - [Costco](Costco/api.md) — GraphQL, MSAL Bearer token
+- [Darkbloom](Darkbloom/api.md) — local inference provider (OpenAI-compatible endpoint, model loading/serving behavior)
 - [Deluge](Deluge/api.md) — torrent JSON-RPC / WebUI (move_storage/recheck semantics, container path topology)
 - [Fi](Fi/api.md) — GPS dog collar; unofficial GraphQL (email/password), collar joins WiFi natively (no Base needed), pytryfi client; no official API
 - [Firewalla](Firewalla/api.md) — router/firewall, local + consumer cloud + MSP APIs
