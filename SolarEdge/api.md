@@ -18,7 +18,7 @@ SetApp inverters (no LCD — most modern HD-Wave / HD-Wave 2 / Single Phase Inve
 1. Flip the red P/1/0 toggle to **P** for **< 5 seconds**, then back to **1**. WiFi Direct comes up.
 2. Join `SE-WiFiDirect_<serial>` (password printed on the inverter's side label).
 3. Open SetApp app, or browse to `http://<lan-ip>` from a laptop.
-4. Login as **Installer**, default password `<installer-password>` (call SolarEdge installer support if the installer changed it).
+4. Login as **Installer**, default password `12312312` (call SolarEdge installer support if the installer changed it).
 5. Site Communication → Modbus TCP → **Enable**.
 6. Port: **1502** (default; not 502 — SolarEdge picked a non-standard port).
 7. Device ID: **1** (default).

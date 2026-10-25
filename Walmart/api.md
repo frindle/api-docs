@@ -56,6 +56,19 @@ The image is usually present in the SSR HTML alongside the button. If not, the m
 - Syncs back 30 days, or to `walmartLastSync - 48 hours`, whichever is earlier
 - Fetches up to 3 detail pages concurrently
 
+**⚠ Known bug (confirmed 2026-09-23, not yet fixed): `isStoreDelivery` computed but never gates the tracking fallback**
+
+`sidecar/src/walmart.js` computes `isStoreDelivery` from the order-detail HTML (`/Delivery\s+from\s+store/i.test(html)`, `walmart.js:251`) and returns it on the detail object (`walmart.js:357`), but nothing ever reads it before `syncWalmart`'s digits-only fallback fires:
+
+```js
+// walmart.js:442-444
+const filteredTracking = detail.tracking.filter(t => t !== order.orderNumber);
+if (filteredTracking.length) order.trackingNumbers = filteredTracking;
+else order.trackingNumbers = [order.orderNumber.replace(/[^0-9]/g, '')];
+```
+
+When no real tracking number was scraped, this unconditionally falls back to the digits of the order number itself as a fake "tracking number" — regardless of whether the order is genuinely store-pickup/store-delivery (where an order-number-as-tracking placeholder is reasonable) or simply an in-transit shipped order that hasn't had its tracking number rendered/scraped yet (where this fabricates a bogus tracking number that will never resolve). `isStoreDelivery` exists specifically to make that distinction and is silently discarded. Documenting as a known gap, not fixing here.
+
 ## Integration Files
 
 | File | Purpose |

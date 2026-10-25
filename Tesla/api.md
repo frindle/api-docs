@@ -11,8 +11,8 @@
 
 ### OAuth Flow
 - **Type:** Authorization Code
-- **Client ID:** `<id>`
-- **Redirect URI:** `https://<your-domain>/auth/callback`
+- **Client ID:** `<uuid>`
+- **Redirect URI:** `https://<personal-domain>/auth/callback`
 - **Scopes:** `openid vehicle_device_data vehicle_location vehicle_cmds energy_device_data offline_access`
 
 ### Scope notes (verified June 2026)
@@ -93,9 +93,9 @@ Authorization: Bearer <access_token>
 ## Site / Energy
 
 ### Energy Site Details
-- **Site Name:** Halton Place
-- **energy_site_id:** `2252299088632281`
-- **asset_site_id:** `<id>`
+- **Site Name:** <site-name>
+- **energy_site_id:** `<site-id>`
+- **asset_site_id:** `<uuid>`
 
 ### Get Site Live Status
 ```
@@ -114,8 +114,8 @@ Response fields:
 
 | Side  | device_id | Serial |
 |-------|-----------|--------|
-| LEFT (Rivian) | `<id>` | `<VIN>` |
-| RIGHT (Tesla) | `<id>` | `<VIN>` |
+| LEFT (Rivian) | `<uuid>` | `<serial>` |
+| RIGHT (Tesla) | `<uuid>` | `<serial>` |
 
 Part: `1457768-02-H`
 
@@ -134,12 +134,12 @@ Response (when it works) includes `wall_connectors` array. Each entry has:
 - `serial_number` — S/N printed on the sticker (field name TBC — check logs)
 - `din` — alternate identifier field
 
-**Known wall connector data for Halton Place (from sticker + API):**
+**Known wall connector data for <site-name> (from sticker + API):**
 
 | Side | device_id | Serial (sticker) |
 |------|-----------|-----------------|
-| LEFT (Rivian) | `<id>` | `<VIN>` |
-| RIGHT (Tesla) | `<id>` | `<VIN>` |
+| LEFT (Rivian) | `<uuid>` | `<serial>` |
+| RIGHT (Tesla) | `<uuid>` | `<serial>` |
 
 ### Get Wall Connector Vitals (per-connector live data) — DEPRECATED
 
@@ -153,7 +153,7 @@ Per-connector data now lives inside `live_status` under `wall_connectors[]`:
 {
   "wall_connectors": [
     {
-      "din": "1457768-02-H--<VIN>",
+      "din": "1457768-02-H--<serial>",
       "wall_connector_state": 2,
       "wall_connector_fault_state": 2,
       "wall_connector_power": 0,
@@ -161,7 +161,7 @@ Per-connector data now lives inside `live_status` under `wall_connectors[]`:
       "powershare_session_state": 1
     },
     {
-      "din": "1457768-02-H--<VIN>",
+      "din": "1457768-02-H--<serial>",
       "wall_connector_state": 1,
       "wall_connector_power": 11641.846
     }
@@ -192,7 +192,7 @@ Response fields (if accessible — may require additional fleet permissions):
 
 ## Vehicle
 
-- **VIN:** `<VIN>` (Tesla Model 3)
+- **VIN:** `<vin>` (Tesla Model 3)
 
 ### Get Vehicle Data
 ```

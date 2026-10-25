@@ -4,14 +4,18 @@ Base URL: `https://cardcenter.cc`
 
 ## Authentication
 
-POST `/Api/Tokens`
+**Cookie session + antiforgery header** (verified live 2026-10-25). `POST /Api/Tokens` (bearer) is gone (404). The login page is now a Vue SPA: it has NO form inputs, so scraping a hidden `__RequestVerificationToken` input fails ("token not found on login page").
 
-```json
-{ "email": "...", "password": "..." }
-```
+1. `GET /Account/Login`. The response sets an antiforgery cookie (`.AspNetCore.Antiforgery.*`, HttpOnly, keep it in the cookie jar). The HTML has an inline script:
+   `window.token = {"requestToken":"...","formFieldName":"__RequestVerificationToken"}`. Parse `requestToken` out of it.
+2. `POST /Api/Account/Login`, `Content-Type: application/json`, `Accept: application/json`, header `RequestVerificationToken: <requestToken>`, body `{ "email": "...", "password": "..." }`. 200 = logged in (session cookies). If the JSON has `twoFactor`, the account needs a second step (`/Account/TwoFactor`).
+3. Every later mutating call (POST/PUT/PATCH/DELETE under `/Api/`) sends the same `RequestVerificationToken` header plus the session cookies.
 
-Response field: `token` (also check `accessToken`, `access_token` as fallbacks).
-Use as `Authorization: Bearer <token>` on all subsequent requests.
+Errors are JSON `{ title, detail, reason, errors }`:
+- `400` + `reason: "Antiforgery"` -> `GET /Api/AntiforgeryTokens` returns `{ requestToken }`; swap it in and retry once.
+- `403` + `reason: "MFARequired"` -> step-up verification needed.
+
+Older notes below that say `Authorization: Bearer` are from the pre-migration API; use the cookie + header scheme above.
 
 ---
 
@@ -128,7 +132,7 @@ Detail for a single buy order. Includes everything needed to submit a card witho
     "id": "...",
     "date": "...",
     "agreement": {
-      "id": "<id>",
+      "id": "<uuid>",
       "date": "2025-04-01T16:53:34Z"
     }
   },

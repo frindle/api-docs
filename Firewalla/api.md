@@ -123,7 +123,7 @@ Aggregate stats for a time range. Response shape not fully documented.
 
 ## Consumer Cloud API Endpoints (my.firewalla.net — free)
 
-Box GID: `<id>`
+Box GID: `<uuid>`
 
 ### `GET /v1/device/list`
 

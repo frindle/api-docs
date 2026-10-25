@@ -10,11 +10,11 @@ Three-tier fallback for obtaining the Bearer token:
 
 1. **Intercepted token** — captured from the MAIN world via XHR/fetch interception before Costco's own JS fires it
 2. **`GET /gettoken`** — a Costco-internal endpoint that returns a fresh token if the user is logged in
-3. **MSAL auth code exchange** — POST to `https://signin.costco.com/<id>/b2c_1a_sso_wcs_signup_signin_209/oauth2/v2.0/token` with `grant_type=authorization_code` (triggered by Costco's own login flow)
+3. **MSAL auth code exchange** — POST to `https://signin.costco.com/<uuid>/b2c_1a_sso_wcs_signup_signin_209/oauth2/v2.0/token` with `grant_type=authorization_code` (triggered by Costco's own login flow)
 
 > **Note:** Refresh token grants (`grant_type=refresh_token`) using `B2C_1A_SSO_WCS_signup_signin_209` fail with `AADB2C90088: Expected Value: B2C_1A_SSO_WCS_signup_signin_184`. The auth code exchange works fine. Use `/gettoken` instead of MSAL refresh for background token renewal.
 
-**Client ID (MSAL):** `<id>`
+**Client ID (MSAL):** `<uuid>`
 
 **clientId for API calls** — extracted from:
 - URL path: `/app/{uuid}/`

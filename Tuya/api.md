@@ -108,7 +108,7 @@ brand; the Westinghouse app blocks pairing through the real Tuya app.
 | `16` | Oscillation | bool | Confirmed |
 | `17` | Sleep mode | bool | Confirmed |
 | `18` | Target temp, °F | int | Confirmed, but **not a live mirror of DP 6** — only recalculated from DP 6 when DP 10 (unit preference) is toggled. Conversion isn't exact standard rounding (20°C→68°F expected, device produced 69) — treat as device-computed, not something to replicate client-side. |
-| `4`, `13`, `14`, `15`, `19` | Unknown | `4`/`13`/`14`/`15` are ints (seen only as `0`), `19` is bool (seen only as `false`) | **Unmapped.** Never observed to change across power/mode/speed/temp/sleep/oscillation/unit toggles. Likely candidates: child lock, filter/clean reminder, buzzer/beep, WiFi signal indicator, or timer/countdown state — but Tuya's "Add Timer" scheduling feature in the vendor app appears to be cloud-side (server-triggered normal commands at trigger time), not backed by local DPs, so it's unlikely to explain these. Confirming these requires either (a) Tuya IoT Cloud's Device Debug panel/TSL schema, or (b) blind `set_value()` writes to each while physically watching/listening to the unit for a reaction — not yet attempted.
+| `4`, `13`, `14`, `15`, `19` | Unknown | `4`/`13`/`14`/`15` are ints (seen only as `0`), `19` is bool (seen only as `false`) | **Unmapped.** Never observed to change across power/mode/speed/temp/sleep/oscillation/unit toggles. Likely candidates: child lock, filter/clean reminder, buzzer/beep, WiFi signal indicator, or timer/countdown state — but Tuya's "Add Timer" scheduling feature in the vendor app appears to be cloud-side (server-triggered normal commands at trigger time), not backed by local DPs, so it's unlikely to explain these. Confirming these requires either (a) Tuya IoT Cloud's Device Debug panel/TSL schema, or (b) blind `set_value()` writes to each while physically watching/listening to the unit for a reaction — not yet attempted. |
 
 ### Behavior notes
 
@@ -123,8 +123,8 @@ brand; the Westinghouse app blocks pairing through the real Tuya app.
 ### Credentials
 
 Device-specific `device_id`/`local_key`/LAN IP for this specific unit are
-**not** stored here (this file is public/shared docs) — see the private
-vault note at `Claude/Projects/westinghouse-homebridge.md` for those.
+**not** stored here — see the private vault note at
+`Claude/Projects/westinghouse-homebridge.md` for those.
 
 ### Homebridge integration
 

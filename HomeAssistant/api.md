@@ -27,7 +27,7 @@ REST/webhook API (used by other services, e.g. ev-dashboard).
 - ev-dashboard's Rivian-arrival garage-lights automation calls
   `http://<lan-ip>:8123/api/webhook/<id>` directly over LAN — no
   Cloudflare involved, HA has no Access app in front of it.
-- `homeassistant.local` (mDNS) does **not** resolve from inside Docker
+- `<ha-host>.local` (mDNS) does **not** resolve from inside Docker
   containers (no multicast DNS there) — always use the static IP
   (<lan-ip>) for container-to-HA calls.
 

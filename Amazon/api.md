@@ -71,6 +71,8 @@ When the carrier captures a proof-of-delivery image:
 - TTL: **3 days** (`X-Amz-Expires=259200`). Download server-side immediately; don't store the URL.
 - Sometimes the `src` is set; sometimes only `data-src` (lazy load). Read `data-src` first, then `src`.
 
+**Confirmed 2026-09-23, no gap found:** the signed-S3-URL mechanism above is already fully handled server-side by `lib/deliveryPhoto.ts`'s `captureDeliveryPhoto()` — its "Path 1: signed URL the server can fetch (Amazon S3)" branch fetches the URL directly (no cookies needed, matches the S3 pre-signed link being self-contained). This is intentionally the *other* path from Walmart's, which requires the extension to forward already-fetched bytes because Walmart's photo URL needs the user's session cookies — the dual-path design in that file is correct as-is, not a gap.
+
 ---
 
 ### Not-found / inaccessible orders

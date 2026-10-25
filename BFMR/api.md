@@ -1,5 +1,25 @@
 # BFMR API
 
+> **⚠ AWS WAF block on `www.bfmr.com/api/*` — corrected 2026-10-06.** The 2026-09-23 version of this banner said the block is AWS WAF Bot Control bound to a browser-minted `aws-waf-token`, so writes "must be driven by a real browser". That attribution is **not supported by the newer measurement** and is retired. What is actually proven:
+>
+> **Proven (measured 2026-10-06, unauthenticated `GET https://www.bfmr.com/api/my-tracker` from the Mac, Node 26.7):**
+>
+> | Client | Result | Meaning |
+> |--------|--------|---------|
+> | Node default `fetch` / `node:https` | **403** `text/html`, `server: awselb/2.0` | blocked at the AWS ALB WAF, never reaches the app |
+> | `node:https` with `{ ciphers: 'DEFAULT' }` | **401** JSON from nginx | passes the WAF, reaches the app (401 = unauthenticated, as expected) |
+> | `node:https` with `{ maxVersion: 'TLSv1.2' }` | **401** JSON from nginx | same |
+> | `curl` | **401** JSON | same |
+>
+> So the 403 is a rule on the **Node default TLS fingerprint** (cipher/handshake shape), not a missing `aws-waf-token`. The same request with a different cipher list flips 403 to 401 with no token involved. (The 2026-09-23 "401 despite correct headers" observation is an app-level response, i.e. the request had already passed the WAF; it is not evidence of token binding. The `awswaf_*` localStorage keys and the `token.awswaf.com` challenge/`mp_verify` calls are real and were observed on the page, but their role in blocking API calls is unproven.)
+>
+> **Still unproven / in progress:**
+> * An **authenticated 200** through the `ciphers: 'DEFAULT'` path has not been confirmed live. Do not assume writes (`POST /api/my-tracker`, `POST /api/login`, `PUT /api/my-tracker/action`) work from server-side Node after the cipher change until that is measured.
+> * The "login 403 = reCAPTCHA v3" claim (code comments in `lib/bfmrWeb.ts`, `sidecar/src/bfmr.js`) predates this finding and was **never re-measured**; it may be the same TLS block, may be reCAPTCHA, or both.
+> * The server-side fix is **unfinished**: resell-tracker bundle `rt-bfmr-tls-fingerprint` is meant to make `loggedFetch` (`lib/apiCallLog.ts`) route `bfmr.com` hosts (only) through `node:https` with `ciphers: 'DEFAULT'`. As of 2026-10-06 nothing has landed on resell-tracker `main` (`lib/apiCallLog.ts` and `lib/bfmrWeb.ts` contain no cipher/`node:https` routing). Authoring jobs failed repeatedly (see "resell-tracker integration notes" below); the bundle was released from the queue lanes and is to be requeued. Live check after landing is via the app's own `/api/bfmr/deals`.
+>
+> **What works today:** the REST surface (`api.bfmr.com/api/v2`, `X-API-KEY`/`X-API-SECRET`) works from server-side Node (it is what the production sync uses). The headless **sidecar** works because it runs real Chromium and does the tracker fetch as an in-page `fetch()` (`page.evaluate`) inside an already-logged-in session — a browser TLS fingerprint, which is consistent with the finding. Manual workaround for pushing an order number the server cannot push: enter it on BFMR My Tracker.
+
 Three separate surfaces with different base URLs and authentication:
 
 | Surface | Base URL | Auth | Used by |
@@ -28,11 +48,15 @@ Three separate surfaces with different base URLs and authentication:
 
 Extract token from `data.token` (nested under `data`, NOT a top-level `access_token`).
 
+> Shape caveat (2026-10-06): `app/api/bfmr/web-session-seed/route.ts` also accepts the raw login response as `data.user.auth_token`, so a newer login response may carry the token there instead of `data.token`. Unverified which is current; `lib/bfmrWeb.ts` `login()` reads `access_token`/`token` at top level or under `data`.
+
 Use as `Authorization: Bearer <token>` on all subsequent requests.
 
 POST requests also require the XSRF-TOKEN cookie value sent as `X-XSRF-TOKEN` header (Laravel CSRF protection). The cookie is set by the login response.
 
 Credentials stored as `bfmr_email` and `bfmr_password` in user settings.
+
+**Login gating + session handling (resell-tracker, verified in `lib/bfmrWeb.ts` 2026-10-06):** `POST /api/login` is described in code as reCAPTCHA v3 gated (server-side login returned 403; see the banner caveat that this was never re-measured against the TLS finding), so the normal path is a **manually seeded session**: a token captured from a real browser login is stored by `seedBfmrWebSession` (route `POST /api/bfmr/web-session-seed`) into settings `bfmr_session_token`, `bfmr_session_xsrf`, `bfmr_session_cookies`, `bfmr_session_expires`. BFMR now issues **~30-day JWTs** (captured live); `getSession` prefers the JWT's own `exp` claim (minus a 5-minute margin) over the stored expiry (commit f35fd16, 2026-09-20), falling back to a 50-minute cache TTL only for undecodable tokens. The sidecar path logs in through the shared manual-VNC flow instead (`sidecar/src/loginFlow.js`).
 
 #### REST API — `X-API-KEY` + `X-API-SECRET`
 
@@ -221,7 +245,7 @@ Reserve items on a deal.
 
 **Request body:**
 ```
-deal_slug=tcl-43-q31k-series-1080p-fhd-qled-smart-tv-with-google-tv
+deal_slug=<redacted>
 reservations[0][item_id]=15298
 reservations[0][item_qty]=3
 ```
@@ -366,6 +390,8 @@ to the string when none has fired:
 | shipped | `tracking_number` present |
 | (earlier) | fall back to `status` string |
 
+**Terminal statuses win over the fields.** `cancelled`, `returned`, `return`, `set_aside`, `closed` are taken from the status string as-is (`BFMR_TERMINAL_STATUSES` in `lib/bfmr.ts`): a returned/cancelled row can still carry `date_processed`/`date_paid` from before the return, and deriving "processed" from those would resurrect it. For non-terminal rows the more advanced of (field-derived, string) wins, because the string is occasionally *ahead* (e.g. `paid` before `date_paid` is written). Split-shipment paid rollup (`computeBfmrPaidRollup`): an order's legs pay independently, so only the paid legs count toward paid money fields (order 900 regression: one paid $1893 leg + one shipped $631 leg read as fully paid).
+
 An **order** spanning multiple items is only truly "processed" when *every*
 active item is processed — roll up on the least-advanced item, not the most,
 or the order reads Processed while items are still shipping. resell-tracker
@@ -500,6 +526,7 @@ Cancel a reservation (and likely other tracker actions).
 ```json
 {
   "action": "cancel",
+  "complete_package": false,
   "tracker_data": [
     {
       "id": 1628298,
@@ -532,6 +559,8 @@ Cancel a reservation (and likely other tracker actions).
 }
 ```
 
+Top-level `complete_package` (confirmed 2026-09-23, present on a real cancel of a `type: "purchased"` row): meaning unconfirmed, observed `false` on a non-bundle single-item cancel (`is_bundle: 0`); worth re-checking on a bundled/multi-item reservation.
+
 **Response:**
 ```json
 { "success": true, "status": 200, "message": "Data updated successfully!", "data": null }
@@ -544,6 +573,16 @@ Pass the full tracker row as received from `GET /api/my-tracker` — same shape 
 Key distinction between `type: "purchased"` and `type: "reservation"`:
 - `"purchased"`: `PID` = row ID, `RID` = the linked reservation ID, `id` = PID
 - `"reservation"`: `PID` = null, `RID` = row ID, `id` = RID
+
+**Reservation-split ID mechanics (confirmed 2026-09-23) — distinct from shipment-split above:**
+
+When a multi-qty **reservation** gets an order number attached to only *part* of its quantity (a different split axis than the shipment-split covered above, which splits an already-purchased row by tracking number): `RID` is the **parent batch ID**, assigned once at the original `POST /api/deals/reserve` call and stable across every later mutation of that original reservation. `my_tracker_id` and `PID` are **per-split-portion IDs**, newly minted the moment a portion of the reservation gets its own order#/tracking. `id` mirrors whichever ID is current for that row — `RID` before a split assigns a `PID`, `PID` after. `SID` stays `null` until a shipment stage is reached. Confirmed live: two reservations of the same item/deal (`item_id`/`deal_id` identical, created via two separate `POST /api/deals/reserve` calls) show up as **two separate tracker rows**, not one split line — BFMR's UI does not visually distinguish "two independent reservations of the same item" from "one reservation split into portions"; only `RID` tells them apart (different `RID`s = independent reservations; same `RID`, different `PID`/`my_tracker_id` = one reservation split).
+
+**Field-clearing convention:** to clear `order_id`/`tracking_number` on a `POST /api/my-tracker` update, send empty string `""` — not `null`, not field omission.
+
+**Business rule:** order numbers must be uploaded within **8 hours** of reservation creation to lock in the reservation (UI shows a live countdown badge, e.g. "7h 42m").
+
+**Replacing tracking on an already-shipped row (confirmed 2026-10-02, order 943, done by hand in the BFMR UI):** the UI does `POST https://www.bfmr.com/api/my-tracker` with the shipped row (`type: "shipment"`, `status: "shipped"`, with its `SID`, `RID`, `PID`, `my_tracker_id`) echoed back in `tracker_data` with the new `tracking_number`, plus `dateRange`. Response `{ "success": true, "message": "Data updated successfully!" }`. Clearing uses `tracking_number: ""`. No separate edit/delete-shipment endpoint was found; the only other write is `PUT /api/my-tracker/action {action:"cancel"}` (whole reservation). **BFMR may respond by replacing the whole reservation:** in order 943 the old reservation (`my_tracker_id` 5102424) was replaced by a new reserve id / `my_tracker_id` 5123566 (processed, new tracking), and the old local rows lingered as stale cards because sync never deletes vanished rows. The payload builder/picker exist (`lib/bfmrReplaceTracking.ts`: `buildReplaceTrackingPayload` refuses empty, unchanged, non-`shipment` or non-`shipped` rows; `pickShipmentRow`, commit e692a48) but **no route or UI calls them yet**.
 
 ---
 
@@ -756,11 +795,64 @@ Poll for BFMR's responses on previously submitted orders.
 
 ---
 
+## resell-tracker integration notes (verified against code and git history, 2026-10-06)
+
+### Sync policy (Penn's decisions 2026-10-02; `lib/bfmrSyncTrigger.ts`, `lib/bfmrSyncScope.ts`)
+
+BFMR syncs are **manual only** — `lib/autoSync.ts` deliberately does not call BFMR (avoids bot-looking background traffic; CardCenter and BigSky still sync every 6h). Triggers pick a scope for `POST /api/bfmr/sync-reservations`; an unknown trigger falls back to `all`:
+
+| Trigger | Scope | Pulls |
+|---------|-------|-------|
+| `order-open` (opening an unlinked order) | `pending` | narrow, cheap |
+| `manual` (Sync / Resync Groups) | `open` | the 7 open statuses: `purchased, reserved, payment_error, shipped, processed, deadline, pkg_received` |
+| `sidecar` (SYNC_BFMR, below) | `open` | same, plus the scraped `webRows` |
+| `scheduled` | `all` | all 13 statuses: the open 7 plus `return, set_aside, paid, cancelled, returned, closed` |
+| `force-web-backfill` | (escape hatch) | forces the myTrackerId web backfill for every still-null row |
+
+* `getMyTrackerAll` runs the filters **sequentially**, and retries **HTTP 429** with `Retry-After` (capped at 30 s) or exponential backoff (1.5 s base, capped 20 s); HTML error bodies are trimmed to a short `BFMR 429: ...` message (commit 9c15fe9, `lib/bfmr.ts`, `lib/bfmrRetry.test.ts`). Firing every filter at once is what tripped the rate limit.
+* **Vanished lookup** (`lib/bfmrVanished.ts`): a local *open* reservation missing from the open-status pull has probably moved to a finished status, so it is looked up by retailer order number via `GET /api/v2/my-tracker?search=<order_id>` (cap 5, sequential, hits filtered to exactly that `order_id` so an ignored `search` cannot inject rows). Unverified: that BFMR `search` really matches order numbers (failure mode = no hit, row stays stale until a full pull). The sync response reports `scope`, `vanishedLookups`, `vanishedHits`.
+* `supersededRowIds` (commit 0c858aa) is a **pure function** marking local rows replaced by a new BFMR reservation (same `item_id`, different `reserve_id` head, not a split sibling, not a finished status, empty lookups never supersede). It is **not yet wired** into `sync-reservations` or the UI.
+
+### Reservation identity
+
+* A BFMR reservation **split** returns several lines that share one `reserve_id`. The local key is `lineKey = reserve_id|purchase_id|shipment_id` (head falls back to `purchase_id` then `shipment_id`); keying on `reserve_id` alone dropped split lines (`lib/bfmrReservationLineKey.ts`, commits f5f5e84/e659e69). Status progression (reserved → purchased → paid) mints new line keys, so one `reserve_id` can legitimately have several local rows at different statuses (e.g. 323938 / 327007 / 332383 seen live 2026-10-06; whether any are true duplicates is an open question, no diagnosis queued yet).
+* **myTrackerId backfill.** The REST surface returns `my_tracker_id` for most rows, but some (notably "Purchased / Enter tracking") never get one from REST. They are backfilled from the Web App tracker rows by a join on `reserved_at + item model/name + qty + order_id` (`lib/bfmrJoin.ts`; there is no shared id between the two surfaces), **only when exactly one Web row matches** (ambiguous/unmatched stay null, "loudly wrong, not silently wrong"; `matchSplitGroups` handles split portions). Eligibility: rows reserved on/after `2026-09-01` are retried every sync; older null rows are permanently excluded (333 of 759 measured 2026-09-09 as unmatchable, mostly outside BFMR's tracker history window); unparseable dates fall back to a 24 h retry window. The Web rows come from the sidecar scrape (`webRows` in the POST body) or, absent that, a server-side login (`getWebTrackerRows`).
+* Link guards (`lib/bfmrLinkGuard.ts`, `bfmrLinkReconcile.ts`, `bfmrCrossOrderLinks.ts`): a reservation may not carry two links with the same tracking number (scoped **per reservation**, since several reservations of one order can legitimately ship under one tracking number); summed link quantity may not exceed the reservation qty; a link whose reservation's own `order_id` contradicts the order is refused/excluded from price (digits-only, bidirectional, 7-digit floor; unknown on either side is never a contradiction). `selectCanonicalBfmrLinks` drops no-tracking "parent" links once a reservation has tracked split children and resolves duplicate trackings by reservation endorsement, not by link id (the old order-wide rule halved order 929). Stale-link reconciliation moves links from a bare (no purchaseId/shipmentId) row to its single qty-matching live sibling; the sync response reports `staleLinkMigrations` and `staleLinkValues`.
+
+### Order-number push and tracking submit
+
+* `lib/bfmrPushGate.ts`: whether linking an order should push its order number to BFMR is decided on the **reservation's recorded order number** (not on "first time this link row is created", which silently skipped every edited link). It needs `myTrackerId`. BFMR has no split endpoint: posting a smaller `qty` against the row **is** the split, so a partial link yields a partial push.
+* Tracking submit (`POST /api/bfmr/submit-reservation-tracking`): the POST is accepted-then-recorded locally immediately; the read-back verify is bounded (8 s fetch timeout, 30 s submit timeout) and non-blocking (`lib/bfmrSubmitFlow.ts`, commit 1a82bd4). Submit is not offered when the reservation has no tracker id (b68224c); BFMR tracking is never auto-submitted (3b00be6).
+* **Server-side pushes from the app currently fail with `BFMR fetch tracker 403`** for the reason in the banner (Node TLS fingerprint on the web surface). A planned sidecar `BFMR_PUSH_ORDER_NUMBER` command (plan `rt-bfmr-push-via-sidecar`) is **not** in `EXTENSION_COMMAND_TYPES` on `main`; the allow-list there is `SYNC_AMAZON, SYNC_WALMART, SYNC_COSTCO, SYNC_BFMR, SYNC_BIGSKY, SCRAPE_CBM, SYNC_AMAZON_ORDER`. "reservation has no myTrackerId" means run the sidecar sync (main-page "Resync Groups"), not the order-page button.
+
+### Sidecar SYNC_BFMR (`sidecar/src/bfmr.js`)
+
+* Login is the shared manual-VNC flow; `installInterceptor` passively records the page's own `Authorization` / `X-XSRF-Token` headers on `bfmr.com/api/my-tracker` calls, and `confirmLoggedIn` requires a captured 200 with the real `data.my_tracker` array shape. Replaying the page's own headers fixed `fetch tracker 401` (commit 8ae1511).
+* `syncBfmr` loads `https://www.bfmr.com/my-tracker`, then pulls the grid with an in-page `fetch` (3-month window, `page_size` 500, up to 10 pages, `filter_tab=all`, a status list that also includes `In Review` and `Not Received`) and POSTs the rows to `/api/bfmr/sync-reservations` as `webRows` (trigger `sidecar`); it **fails loudly** when the tracker accepts none (`6f81177`, `7e8deed`). Queued via ExtensionCommand `SYNC_BFMR`; "Resync Groups" absorbed the old Sync BFMR button (`0e5f8c5`).
+* Stale in-file comment: the inline note at ~line 85 still says the page's cookies include `aws-waf-token`; the function header (commit 2f3293c, 2026-10-06) is the corrected one.
+
+### Not landed yet (so do not document as behaviour)
+
+* **Order-unlinked flag** (`bfmr-order-unlinked-flag`; `lib/trackingUnlinked.ts` is not on `main`; deferred behind `rt-order-mismatch-port` because both touch `app/orders/page.tsx`).
+* **Link-sync feedback** (`rt-bfmr-link-sync-feedback-v2`; re-authored after a rejected first draft, refine loop still running 2026-10-06, nothing committed).
+* **TLS fingerprint fix** (`rt-bfmr-tls-fingerprint`): see banner. Root causes found while authoring: the model's fixture imported a worktree-relative path and its fake HTTPS response never emitted `end`, hanging `loggedFetch` and freezing the queue lanes for ~16 min; harness guards (per-command wall timeout, network-denying preload, selfcheck-hang ledger signature) were added. Requeue still owed.
+* Already on `main` for the order flags: "tracking not uploaded" honors reservation status (29f568b), "No reservation" chip suppressed on cancelled orders (2578a97), Submit not offered without tracker id (b68224c).
+
+### Operational warning
+
+The resell-tracker app's own `GET /api/settings` returns BFMR password/API secret **in plaintext** to any caller sending `Cookie: resell_uid=1`. Never call it while probing; a masking fix is owed. (This is the app's endpoint, not BFMR's.)
+
+---
+
 ## Known Unknowns
 
 | # | What | Why needed |
 |---|------|------------|
 | 1 | Exact `order_data` payload shape for `POST /api/orders` on `hr-ext-api.bfmr.com` | Rewrite `submitTracking()` to use TrackForMe API instead of `POST /api/my-tracker` |
+| 2 | Authenticated 200 through `node:https` `ciphers: 'DEFAULT'` on `www.bfmr.com` (and whether writes work from server Node) | Decides whether the server can push order numbers/tracking itself or the sidecar must (bundle `rt-bfmr-tls-fingerprint`) |
+| 3 | Whether the `POST /api/login` 403 is reCAPTCHA v3, the TLS fingerprint, or both | Would remove the manual session-seed step if it is only the TLS rule |
+| 4 | Whether BFMR `search=<order number>` on `GET /api/v2/my-tracker` matches order numbers | The vanished-reservation lookup depends on it |
+| 5 | Whether `POST /api/my-tracker` on a shipped row always replaces the reservation (new `my_tracker_id`) or only sometimes | Needed before wiring `supersededRowIds` / replace-tracking into the UI |
 
 ~~`GET /deal/reservations/active` response shape~~ — resolved 2026-08-23, see REST API Endpoints section.
 
@@ -774,5 +866,19 @@ Poll for BFMR's responses on previously submitted orders.
 | `lib/bfmrWeb.ts` | Web App API client — JWT login, profile + extToken fetch, tracker fetch, tracking submission |
 | `app/api/bfmr/web-login/route.ts` | POST handler — logs in with email/password, fetches and saves all 5 settings |
 | `app/api/bfmr/full-sync/route.ts` | POST handler — bulk BFMR order sync, called by "Resync Groups" |
+| `app/api/bfmr/sync-reservations/route.ts` | POST handler — REST status-enum pull by scope, vanished lookup, upserts keyed on `lineKey`, web backfill of `myTrackerId`, auto-link, stale-link reconciliation |
+| `app/api/bfmr/web-session-seed/route.ts` | POST handler — stores a browser-captured session (token/xsrf/cookies/expiry) |
+| `lib/bfmrSyncScope.ts`, `lib/bfmrSyncTrigger.ts` | Scope enums (13 all / 7 open statuses) and the trigger → scope policy |
+| `lib/bfmrVanished.ts`, `lib/bfmrReservationLineKey.ts` | Vanished-order lookup, superseded-row detection, split-safe line key |
+| `lib/bfmrJoin.ts` | Pure join of the REST and Web ID spaces (`myTrackerId` backfill, split-group matching) |
+| `lib/bfmrLinkGuard.ts`, `lib/bfmrLinkReconcile.ts`, `lib/bfmrCrossOrderLinks.ts`, `lib/bfmrPushGate.ts` | Link invariants, canonical-link selection, cross-order exclusion, order-number push decision |
+| `lib/bfmrSubmitFlow.ts`, `lib/bfmrVerify.ts`, `lib/bfmrReplaceTracking.ts` | Accept/verify decoupling, verify read-back, replace-tracking payload helpers (not wired) |
+| `sidecar/src/bfmr.js` | Sidecar login confirm, header interceptor, in-page tracker fetch, `syncBfmr` |
 
-**Settings keys:** `bfmr_email`, `bfmr_password`, `bfmr_api_key`, `bfmr_api_secret`, `bfmr_ext_token`
+**Settings keys:** `bfmr_email`, `bfmr_password`, `bfmr_api_key`, `bfmr_api_secret`, `bfmr_ext_token`, `bfmr_session_token`, `bfmr_session_xsrf`, `bfmr_session_cookies`, `bfmr_session_expires`
+
+*Last verified against resell-tracker `main` (2f3293c) and the dispatch log on 2026-10-06.*
+
+
+## Sync transport (2026-10-08)
+Resync Groups gets BFMR tracker rows over the API (server-side sync-reservations, node:https default ciphers past the WAF, stored ~30-day web JWT). The sidecar browser (SYNC_BFMR) is a fallback only, for when that session is expired (BFMR login is reCAPTCHA-gated).

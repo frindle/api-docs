@@ -110,7 +110,7 @@ query GetVehicleState($vehicleID: String!) {
   vehicleState(id: $vehicleID) {
     cloudConnection { lastSync isOnline }
     batteryLevel { timeStamp value }        # 0-100 percent
-    distanceToEmpty { timeStamp value }     # KILOMETERS — divide by 1.609344 for miles
+    distanceToEmpty { timeStamp value }     # miles (US vehicles)
     batteryLimit { timeStamp value }        # 0-100 percent
     timeToEndOfCharge { timeStamp value }   # minutes
     chargerState { timeStamp value }        # see values below
@@ -154,7 +154,7 @@ query GetVehicleState($vehicleID: String!) {
 - `preconditioning` — preconditioning
 
 **Unit notes:**
-- `distanceToEmpty` — **kilometers** (NOT miles; confirmed empirically 2026-08-30: raw 255 at 55% SOC = 287mi pack, and live dashboard raw 146 = 145km = 90mi in the Rivian app) — divide by **1.609344** for miles. The open web does not document this unit anywhere (a verified-research pass over RivDocs, rivian-python-client, the GraphQL Postman collection and community SDKs found no statement of it); determined from live vehicle data.
+- `distanceToEmpty` — miles (US vehicles)
 - `vehicleMileage` — **meters** (confirmed: ~27k mi shows as ~43M raw) — divide by 1609.344
 - All other numeric fields — native units as labeled
 
@@ -364,7 +364,7 @@ stays `IN_PROGRESS` and `completedAt` stays null until ALL items finish.
 
 ### CRITICAL: service data is OWNER-SCOPED, invisible to shared/invited accounts (confirmed 2026-08-24)
 Tested by logging the SAME app into both Penn's owner account and the ev-dashboard's shared account
-(`dashboard@phd.simplelogin.com`, an invited user on the same R1S, same VIN <VIN>):
+(`<alias-email>`, an invited user on the same R1S, same VIN <vin>):
 
 | op | owner account | dashboard (shared) account |
 |---|---|---|
@@ -497,3 +497,4 @@ plugged] → **plug flips 2→1, disp→1** on unplug → frozen tail `(5,1,1)` 
   idle `cse=1`).
 - Treat `powerKw` / `totalChargedEnergyKwh` as *display values only* while `chargingStateEnum !== 3`;
   they are stale in every non-charging state.
+
