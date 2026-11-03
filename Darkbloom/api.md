@@ -129,7 +129,7 @@ Learned by watching the logged-in web console (`console.darkbloom.dev/providers`
 | Host | What it is | Auth |
 |------|-----------|------|
 | `console.darkbloom.dev/api/...` | Backend for the web console (same origin as the page) | Privy session cookie (`privy-token`). Without it: 401 `{"error":"missing privy token"}` (sandbox: `{"error":"unauthenticated","message":"missing privy token"}`). |
-| `api.darkbloom.dev/v1/...` | Public API (inference + account) | `Authorization: Bearer <account API key>`. No auth: 401. The provider's own `~/.darkbloom/auth_token` gives **403** on `/v1/me/*` (it is a provider credential, not an account key). |
+| `api.darkbloom.dev/v1/...` | Public API (inference + account) | Bearer. API keys: inference. `/v1/me/*`: Privy only (keys and the provider `auth_token` both get 401/403). `/v1/provider/*`: provider `auth_token`. |
 | `sandbox.darkbloom.dev`, `api-sandbox.darkbloom.dev` | Referenced by the console bundle; marketing/app pages | none of the guessed `/hosts`, `/v1/hosts`, `/api/sandbox/hosts` paths exist (404) |
 
 The console keeps the account API key in browser localStorage (`darkbloom_api_key`) next to a `darkbloom_workspace` value; the account key is what to give tools, entered by the user.
@@ -152,8 +152,8 @@ The Sandbox tab is `providers?tab=sandbox`. Money is in **micro-USD** (`earned_m
 
 | Call | Notes |
 |------|-------|
-| `GET /v1/me/providers` | Same provider objects as the console call (used by bloom-ledger for live status). |
-| `GET /v1/me/summary` | Account summary. |
+| `GET /v1/me/providers`, `GET /v1/me/summary` | **Privy session only: account API keys are rejected (401/403)** — confirmed by d-inference `docs/design/macos-electron-app.md` ("remain Privy-only") and a live 2026-11-03 test with a fresh key (also with "My Machine only"). Not usable from a server with a key. |
+| `GET /v1/provider/account-earnings?limit=1000` (or `?window=7d\|30d`) | Bearer; works with the provider's `~/.darkbloom/auth_token` (bloom-earnings-archive). Whether an account API key works here is untested. |
 | `GET /v1/stats` | **No auth needed.** Network-wide: `active_providers`, `active_power_watts` (network total, not per Mac), `application_evidence_models{<model>:{routable, with_evidence}}`, ... |
 | `/v1/sandbox/*` | does not exist on api.darkbloom.dev (404): sandbox data is console-only. bloom-ledger tries `console.darkbloom.dev/api/sandbox/hosts` with the Bearer key; that it accepts a Bearer key instead of the Privy cookie is **unverified**. |
 
