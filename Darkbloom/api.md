@@ -119,3 +119,51 @@ BloomGauge's API cannot select a *pair*: a pair started outside it with `darkblo
 * `memory_reserve_gb = 4` in `provider.toml` vs ~6.4-6.5 GB reserve in the actual load math; the config value's effect is unverified.
 * The ~51 GB Metal working set is unverified (see memory math).
 * `darkbloom switch` narrowing without a restart is untested live.
+
+## Account API (console scrape, 2026-11-03)
+
+Learned by watching the logged-in web console (`console.darkbloom.dev/providers`) in Chrome and probing with curl. Read-only; no keys were read or copied.
+
+### Hosts
+
+| Host | What it is | Auth |
+|------|-----------|------|
+| `console.darkbloom.dev/api/...` | Backend for the web console (same origin as the page) | Privy session cookie (`privy-token`). Without it: 401 `{"error":"missing privy token"}` (sandbox: `{"error":"unauthenticated","message":"missing privy token"}`). |
+| `api.darkbloom.dev/v1/...` | Public API (inference + account) | `Authorization: Bearer <account API key>`. No auth: 401. The provider's own `~/.darkbloom/auth_token` gives **403** on `/v1/me/*` (it is a provider credential, not an account key). |
+| `sandbox.darkbloom.dev`, `api-sandbox.darkbloom.dev` | Referenced by the console bundle; marketing/app pages | none of the guessed `/hosts`, `/v1/hosts`, `/api/sandbox/hosts` paths exist (404) |
+
+The console keeps the account API key in browser localStorage (`darkbloom_api_key`) next to a `darkbloom_workspace` value; the account key is what to give tools, entered by the user.
+
+### Console endpoints (cookie auth)
+
+| Call | Returns |
+|------|---------|
+| `GET /api/me/providers` | `{providers:[...]}`, one per Mac (fields below). Polled by the Providers page. |
+| `GET /api/me/summary` | account summary (balance/earnings header) |
+| `GET /api/me/token-promotions` | promotions |
+| `GET /api/sandbox/hosts` | `{hosts:[...]}`: `host_id, name, state` (e.g. `active`), `online, first_seen_at, last_seen_at, hardware, os_version, addon_version, enrolled_at, attested, enrollment_expires_at, app_attest, placeable, mode` (e.g. `accepting`), `profiles, images, image_fetch, current_runs, vitals` (was null) |
+| `GET /api/sandbox/hosts/<id>` | one host |
+| `GET /api/sandbox/runs?role=provider&state=active&limit=100` | `{runs, next_cursor}` (paged) |
+| `GET /api/sandbox/stats?window=7d` | `window, since, as_of, bucket_seconds, totals, projects, hosts, runner_classes, buckets, lifetime`. `totals`: `jobs, jobs_for_others, jobs_own, running, outcomes, wall_seconds, vcpu_seconds, memory_byte_seconds, linux_seconds, macos_seconds, verified_jobs, paid_jobs, earned_micro_usd, queue_wait_seconds, duration_seconds, projects, commits`. `lifetime`: `since, jobs_for_others, wall_seconds, vcpu_seconds, macos_seconds, projects, earned_micro_usd, first_job_at`. `projects[]`: `repository_id, full_name, jobs, wall_seconds, last_run_at`. |
+
+The Sandbox tab is `providers?tab=sandbox`. Money is in **micro-USD** (`earned_micro_usd`).
+
+### Public endpoints (Bearer account key)
+
+| Call | Notes |
+|------|-------|
+| `GET /v1/me/providers` | Same provider objects as the console call (used by bloom-ledger for live status). |
+| `GET /v1/me/summary` | Account summary. |
+| `GET /v1/stats` | **No auth needed.** Network-wide: `active_providers`, `active_power_watts` (network total, not per Mac), `application_evidence_models{<model>:{routable, with_evidence}}`, ... |
+| `/v1/sandbox/*` | does not exist on api.darkbloom.dev (404): sandbox data is console-only. bloom-ledger tries `console.darkbloom.dev/api/sandbox/hosts` with the Bearer key; that it accepts a Bearer key instead of the Privy cookie is **unverified**. |
+
+### Provider object (`/me/providers`)
+
+`nickname, id, account_id, status` (`online`), `online, last_heartbeat, capacity_accepted_at, hardware{machine_model, chip_name, chip_family, chip_tier, memory_gb, memory_available_gb, cpu_cores, gpu_cores, memory_bandwidth_gbs}, models[], capacity_model_ids[], backend, version, execution_role, os_version, trust_level, attested, mda_verified, verification, app_attest_authorized, authorization_expires_at, acme_verified, se_key_bound, se_public_key, provider_key, secure_enclave, sip_enabled, secure_boot_enabled, authenticated_root_enabled, system_volume_hash, runtime_verified, last_challenge_verified, failed_challenges, system_metrics, backend_capacity, idle_unload_mins, model_autopilot, warm_models[], current_model, pending_requests, max_concurrency, routing_eligibility[], reputation, lifetime_requests_served, lifetime_tokens_generated, registered_at, last_seen`.
+
+* `system_metrics`: only `memory_pressure` (0-1), `cpu_usage` (0-1), `thermal_state` (`nominal`...). **No power/watts per provider** (feature request: Layr-Labs/d-inference#1760), so power still has to be sampled on each Mac (macmon).
+* `routing_eligibility[]`: `{model, reason` (`eligible`...), `loaded}`.
+* `backend_capacity`: `whole_mac_service_used, whole_mac_service_retirement_protocol, slots[]`; each slot has `prompt_work_identity{model_artifact_hash, prompt_contract_id}` and `performance_measurements{epoch, isolated_prefill, decode, delivered_decode, end_to_end` (each `{tokens_per_second, sample_count, sample_age_ms}`), `workload_buckets[]{concurrent_requests, phase, prompt_token_bucket, context_token_bucket, ...}}`. Observed on the M4 Max 35B: prefill ~505 tok/s, decode ~102 tok/s, delivered decode ~96 tok/s, end-to-end ~13.6 tok/s.
+* `max_concurrency` was 24; `idle_unload_mins` 0.
+
+`console.darkbloom.dev/providers` answers `HEAD` with 503 (the page still loads; ignore for health checks).
