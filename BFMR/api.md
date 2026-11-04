@@ -66,7 +66,7 @@ Credentials stored as `bfmr_email` and `bfmr_password` in user settings.
 
 #### REST API — `API-KEY` + `API-SECRET`
 
-(Earlier versions of this doc said `X-API-KEY`/`X-API-SECRET`. The spec and `lib/bfmr.ts` both use `API-KEY` / `API-SECRET`.) Get both from bfmr.com › Developer Tools. A wrong key gets **401**, and repeated failures are rate-limited per IP. resell-tracker's Settings now asks for these two values instead of an email and password.
+(Earlier versions of this doc said `X-API-KEY`/`X-API-SECRET`. The spec and `lib/bfmr.ts` both use `API-KEY` / `API-SECRET`.) Get both from the API keys page BFMR gives every member: https://www.bfmr.com/developer-tools (BFMR calls it "Developer Tools"; it is not the browser dev tools). A wrong key gets **401**, and repeated failures are rate-limited per IP. resell-tracker's Settings now asks for these two values instead of an email and password.
 
 All requests require:
 
