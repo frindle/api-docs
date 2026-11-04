@@ -1,5 +1,11 @@
 # BFMR API
 
+> **Update 2026-11-04: REST v2 is now the primary surface for resell-tracker.**
+> * **Official spec:** `https://api.bfmr.com/storage/api-docs.json` (OpenAPI, rendered by Redoc at `https://api.bfmr.com/`). It is public, so you don't need a login or the Developer Tools page to read it. It lists 12 endpoints: `GET /deals`, `GET /deals/{slug}`, `GET /deal/reservations/active`, `GET`/`POST /my-tracker`, `POST /my-tracker/purchase/cancel`, `POST /my-tracker/reservation/cancel`, `GET /look-ups/retailers`, `POST /insurance/file`, `POST /insurance/void`, `GET /insurance/shipments`, `GET /insurance/shipments/{tracking_number}`.
+> * **REST v2 can't reserve.** It has no endpoint to reserve, no profile or extension-token endpoint, no reservation counts (`max_can_reserve` / `remaining_reservations`) and no per-link stock. Reserving still needs the Web App session.
+> * **Login 403 measured (2026-11-04):** the ApiCallLog in resell-tracker has 8 rows (ids 113398–119330) where `POST https://www.bfmr.com/api/login` returned **403 with an nginx HTML body**. That's nginx, not `awselb/2.0`, so these requests had already passed the ALB WAF. The block is at the app or nginx layer, which fits reCAPTCHA v3 and doesn't fit the TLS-fingerprint rule. Known Unknown #3 is resolved by this.
+> * The seeded ~30-day web session had expired. Saving in Settings failed as a Cloudflare 502 page, because the web-login route returns 502 on any error and Cloudflare replaces a 5xx origin body with its own page. This is fixed below (resell-tracker 11ac610 and 871769a).
+
 > **⚠ AWS WAF block on `www.bfmr.com/api/*` — corrected 2026-10-06.** The 2026-09-23 version of this banner said the block is AWS WAF Bot Control bound to a browser-minted `aws-waf-token`, so writes "must be driven by a real browser". That attribution is **not supported by the newer measurement** and is retired. What is actually proven:
 >
 > **Proven (measured 2026-10-06, unauthenticated `GET https://www.bfmr.com/api/my-tracker` from the Mac, Node 26.7):**
@@ -24,7 +30,7 @@ Three separate surfaces with different base URLs and authentication:
 
 | Surface | Base URL | Auth | Used by |
 |---------|----------|------|---------|
-| REST API | `https://api.bfmr.com/api/v2` | `X-API-KEY` + `X-API-SECRET` headers | Site (server-to-server) |
+| REST API | `https://api.bfmr.com/api/v2` | `API-KEY` + `API-SECRET` headers | Site (server-to-server) |
 | Web App API | `https://www.bfmr.com/api` | JWT Bearer token (from login) | Site (browser) |
 | TrackForMe Extension API | `https://hr-ext-api.bfmr.com/api` | `Bearer <extToken>` (UUID, not api_key) | Chrome extension |
 
@@ -58,7 +64,9 @@ Credentials stored as `bfmr_email` and `bfmr_password` in user settings.
 
 **Login gating + session handling (resell-tracker, verified in `lib/bfmrWeb.ts` 2026-10-06):** `POST /api/login` is described in code as reCAPTCHA v3 gated (server-side login returned 403; see the banner caveat that this was never re-measured against the TLS finding), so the normal path is a **manually seeded session**: a token captured from a real browser login is stored by `seedBfmrWebSession` (route `POST /api/bfmr/web-session-seed`) into settings `bfmr_session_token`, `bfmr_session_xsrf`, `bfmr_session_cookies`, `bfmr_session_expires`. BFMR now issues **~30-day JWTs** (captured live); `getSession` prefers the JWT's own `exp` claim (minus a 5-minute margin) over the stored expiry (commit f35fd16, 2026-09-20), falling back to a 50-minute cache TTL only for undecodable tokens. The sidecar path logs in through the shared manual-VNC flow instead (`sidecar/src/loginFlow.js`).
 
-#### REST API — `X-API-KEY` + `X-API-SECRET`
+#### REST API — `API-KEY` + `API-SECRET`
+
+(Earlier versions of this doc said `X-API-KEY`/`X-API-SECRET`. The spec and `lib/bfmr.ts` both use `API-KEY` / `API-SECRET`.) Get both from bfmr.com › Developer Tools. A wrong key gets **401**, and repeated failures are rate-limited per IP. resell-tracker's Settings now asks for these two values instead of an email and password.
 
 All requests require:
 
@@ -641,7 +649,7 @@ Returns aggregate totals for the current tracker filter (same query params as `G
 
 ### REST API Endpoints (`api.bfmr.com`)
 
-> **Note:** The REST API and Web App API appear to have overlapping functionality. Prefer the Web App API (confirmed from spy) over the REST API where both exist.
+> **Note (revised 2026-11-04):** Prefer the REST API wherever it covers the call. The Web App API needs a login that is gated by reCAPTCHA (see top banner). Only use the Web App surface for things REST lacks: reserving, reservation counts, per-link stock, profile, extension token, and replacing tracking on a shipped row.
 
 > **Docs vs. reality, confirmed 2026-08-23:** BFMR's official published schema (below, from their own
 > API reference with all responses expanded) for `GET /api/v2/my-tracker` does **not** list `my_tracker_id`
@@ -717,11 +725,11 @@ List active deal reservations for the authenticated user. Resolves earlier "not 
 
 #### `GET /api/v2/deals` — Active Deals List
 
-Query params: `page_size` (1-50), `page_no`, `retailer` (comma-separated slugs), `retail_type` (`above`|`full`|`below`), `exclusive_deals_only` (`0`|`1`), `in_stock` (`0`|`1`). Response: `{ "message", "deals": { deal_id, deal_code, retail_price, title, slug, closing_at, is_reservation_closed, retailers, retail_type, payout_price, deal_information, is_bundle, is_exclusive_deal, items: [{ id, name, color, model, upc, category, retailer_links }] } }`
+Query params: `page_size` (1-50), `page_no`, `retailer` (comma-separated slugs), `retail_type` (`above`|`full`|`below`), `exclusive_deals_only` (`0`|`1`), `in_stock` (`0`|`1`). `deals` is an **array**. Response: `{ "message", "deals": [{ deal_id, deal_code, retail_price, title, slug, closing_at, is_reservation_closed, retailers, retail_type, payout_price, deal_information, is_bundle, is_exclusive_deal, items: [{ id, name, color, model, upc, category, retailer_links: [{ retailer, identifier_id, url }] }] }] }`. `deal_id`/item `id` are strings, prices are numbers, and `is_reservation_closed` is a boolean (the web surface uses strings and 0/1). There are no reservation counts and no per-link `in_stock`. The only stock signal is the `in_stock=1` filter, which works per deal.
 
 #### `GET /api/v2/deals/{slug}` — Deal Details
 
-Same shape as above under `"deal"` instead of `"deals"`; items also carry `tracking_deadline` and `upc` as an array of strings (not a single string).
+Same shape as above under `"deal"` instead of `"deals"`, with no `is_reservation_closed`. Items also carry `tracking_deadline`, and `upc` is an array of strings (not a single string).
 
 #### `GET /api/v2/look-ups/retailers` — Active Retailers List
 
@@ -733,7 +741,9 @@ Body (form-encoded): `purchase_id[]`. Response: `{ "message", "invalid_purchases
 
 #### `POST /api/v2/my-tracker/reservation/cancel` — Cancel Reserved
 
-Body (form-encoded): `reserve_id[]`. Response: `{ "message", "invalid_reservations": [...] }`
+Body: the spec gives a JSON body `{ "reserve_id": ["<id>", ...] }` (required array of strings). Earlier notes said form-encoded `reserve_id[]`. resell-tracker sends JSON (871769a), and this hasn't been tried live yet. Response: `{ "message": "Reservation cancelled successfully!", "invalid_reservations": [...] }`. A non-empty `invalid_reservations` means BFMR refused those ids.
+
+> The three shipment endpoints below (`shipments/status`, `shipments/otp/amazon`, `shipments/do-not-process`) are **missing from the 2026-11-04 spec**. They may have been removed or may just be undocumented. Don't rely on them until they're re-tested.
 
 #### `GET /api/v2/shipments/status` — Shipment Status of Tracking Number
 
@@ -831,6 +841,13 @@ BFMR syncs are **manual only** — `lib/autoSync.ts` deliberately does not call 
 * `syncBfmr` loads `https://www.bfmr.com/my-tracker`, then pulls the grid with an in-page `fetch` (3-month window, `page_size` 500, up to 10 pages, `filter_tab=all`, a status list that also includes `In Review` and `Not Received`) and POSTs the rows to `/api/bfmr/sync-reservations` as `webRows` (trigger `sidecar`); it **fails loudly** when the tracker accepts none (`6f81177`, `7e8deed`). Queued via ExtensionCommand `SYNC_BFMR`; "Resync Groups" absorbed the old Sync BFMR button (`0e5f8c5`).
 * Stale in-file comment: the inline note at ~line 85 still says the page's cookies include `aws-waf-token`; the function header (commit 2f3293c, 2026-10-06) is the corrected one.
 
+### REST-first BFMR (2026-11-04, commits 11ac610 and 871769a)
+
+* **Settings** (`app/settings/page.tsx`): the BFMR card asks for the API key and secret, checks them with `POST /api/bfmr/test` (which now returns **401**, not 502, when BFMR rejects the pair, so Cloudflare doesn't mask it), then saves `bfmr_api_key`, `bfmr_api_secret`, `bfmr_sync_start_date` and `bfmr_write_transport = 'rest'`. The email/password form is gone, and the UI no longer calls `web-login`.
+* **`lib/bfmrDeals.ts`**: `dealsFor` / `dealItemsFor` use REST when a key is saved, and the Web App session only when no key is saved. They map REST into the existing `BfmrDeal` / `DealItem` shapes (`restDealToWeb`, `restItemToWeb`). REST items get `counts_unknown: true`, and the pages show **"Open"** for them instead of "at your cap". A link's `in_stock` is true when its deal is in `GET /deals?in_stock=1` (cached for 5 minutes per key).
+* **Routes moved to REST:** `deals`, `deal-items`, `vendors`, `watchers` (the name lookup when creating a watcher), and `cancel-reservation`. Cancel sends `reserve_id` from the REST tracker row to `/my-tracker/reservation/cancel` and returns 409 when BFMR lists the id as invalid.
+* **Still on the Web App session (REST has no equivalent):** `reserve` and the auto-reserve watcher (`lib/bfmrWatcher.ts` → `checkAndReserve`), `getProfile` / extension token, the optional web `myTrackerId` backfill in `sync-reservations`, and `web-session-seed`. These fail while the web session is expired.
+
 ### Not landed yet (so do not document as behaviour)
 
 * **Order-unlinked flag** (`bfmr-order-unlinked-flag`; `lib/trackingUnlinked.ts` is not on `main`; deferred behind `rt-order-mismatch-port` because both touch `app/orders/page.tsx`).
@@ -850,9 +867,11 @@ The resell-tracker app's own `GET /api/settings` returns BFMR password/API secre
 |---|------|------------|
 | 1 | Exact `order_data` payload shape for `POST /api/orders` on `hr-ext-api.bfmr.com` | Rewrite `submitTracking()` to use TrackForMe API instead of `POST /api/my-tracker` |
 | 2 | Authenticated 200 through `node:https` `ciphers: 'DEFAULT'` on `www.bfmr.com` (and whether writes work from server Node) | Decides whether the server can push order numbers/tracking itself or the sidecar must (bundle `rt-bfmr-tls-fingerprint`) |
-| 3 | Whether the `POST /api/login` 403 is reCAPTCHA v3, the TLS fingerprint, or both | Would remove the manual session-seed step if it is only the TLS rule |
+| ~~3~~ | ~~Whether the `POST /api/login` 403 is reCAPTCHA v3 or the TLS fingerprint~~. Resolved 2026-11-04: the 403 comes from nginx (app layer), not awselb, so it is not the TLS rule. | — |
 | 4 | Whether BFMR `search=<order number>` on `GET /api/v2/my-tracker` matches order numbers | The vanished-reservation lookup depends on it |
 | 5 | Whether `POST /api/my-tracker` on a shipped row always replaces the reservation (new `my_tracker_id`) or only sometimes | Needed before wiring `supersededRowIds` / replace-tracking into the UI |
+| 6 | Whether REST deal item `id` equals the Web App `item_id` | Watchers store the `itemId` they're created with, now taken from REST deal items, and `checkAndReserve` reserves it on the web surface. If the ids differ, the watcher would reserve the wrong item. |
+| 7 | Whether `POST /my-tracker/reservation/cancel` takes JSON (per spec) or form-encoded `reserve_id[]` | resell-tracker sends JSON. Check the first live cancel. |
 
 ~~`GET /deal/reservations/active` response shape~~ — resolved 2026-08-23, see REST API Endpoints section.
 
@@ -862,9 +881,10 @@ The resell-tracker app's own `GET /api/settings` returns BFMR password/API secre
 
 | File | Purpose |
 |------|---------|
-| `lib/bfmr.ts` | REST API client — `X-API-KEY`/`X-API-SECRET` auth, deals, reservations, shipments |
+| `lib/bfmr.ts` | REST API client — `API-KEY`/`API-SECRET` auth, deals, reservations, shipments, `cancelReservations` |
+| `lib/bfmrDeals.ts` | REST-first deals/deal items/cancel for the routes, falling back to the web session; maps REST data to the web shapes |
 | `lib/bfmrWeb.ts` | Web App API client — JWT login, profile + extToken fetch, tracker fetch, tracking submission |
-| `app/api/bfmr/web-login/route.ts` | POST handler — logs in with email/password, fetches and saves all 5 settings |
+| `app/api/bfmr/web-login/route.ts` | POST handler — logs in with email/password, fetches and saves all 5 settings. The UI no longer calls it (2026-11-04); its catch still returns 502. |
 | `app/api/bfmr/full-sync/route.ts` | POST handler — bulk BFMR order sync, called by "Resync Groups" |
 | `app/api/bfmr/sync-reservations/route.ts` | POST handler — REST status-enum pull by scope, vanished lookup, upserts keyed on `lineKey`, web backfill of `myTrackerId`, auto-link, stale-link reconciliation |
 | `app/api/bfmr/web-session-seed/route.ts` | POST handler — stores a browser-captured session (token/xsrf/cookies/expiry) |
@@ -877,7 +897,7 @@ The resell-tracker app's own `GET /api/settings` returns BFMR password/API secre
 
 **Settings keys:** `bfmr_email`, `bfmr_password`, `bfmr_api_key`, `bfmr_api_secret`, `bfmr_ext_token`, `bfmr_session_token`, `bfmr_session_xsrf`, `bfmr_session_cookies`, `bfmr_session_expires`
 
-*Last verified against resell-tracker `main` (2f3293c) and the dispatch log on 2026-10-06.*
+*Last verified against resell-tracker `main` (871769a) and BFMR's published OpenAPI spec on 2026-11-04 (earlier sections: 2f3293c, 2026-10-06).*
 
 
 ## Sync transport (2026-10-08)
