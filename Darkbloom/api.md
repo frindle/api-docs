@@ -167,3 +167,59 @@ The Sandbox tab is `providers?tab=sandbox`. Money is in **micro-USD** (`earned_m
 * `max_concurrency` was 24; `idle_unload_mins` 0.
 
 `console.darkbloom.dev/providers` answers `HEAD` with 503 (the page still loads; ignore for health checks).
+
+## Updates since 2026-11-03 (refreshed 2026-11-19)
+
+Sources: our offload repo (`darkbloom*` scripts and their tests), the 2026-11-09 sandbox plan, the 2026-11-13 ladder design, the 2026-11-14 plex model test, and the BloomGauge agent tool list. Where something was not re-measured it says so.
+
+### Version and sandbox add-on (2026-11-09)
+
+* `darkbloom` auto-updated to **0.10.11** on 11-09 (autoupdate stays on). New in that version: a **`me_first`** setting that pauses network inference while the local queue is using the local API. We keep it on. Nothing else in 0.10.11 broke our client.
+* The **sandbox add-on** (paid macOS and Linux VM jobs; 1.3.7 then, 1.3.8 pending qualification) holds the whole Mac: **while a sandbox job runs, Darkbloom unloads every model**. Measured over 229 holds from 11-03 to 11-13: Darkbloom held about 19% of the time; hold length median 11.2 min, p75 15.9, p90 22.2, longest 126.8; 27% of holds exceeded 15 min.
+* Over 11-01 to 11-09, sandbox macOS jobs earned far more than Linux jobs, base reward or network inference combined, so **sandbox has priority over the research queue, which has priority over network inference**. Hold policy `preempt`; never pause the sandbox for our own work.
+* Host state files: `~/.darkbloom/runtime/addon-hold.json` (hold marker; the queue reads it first, with the provider log tail as fallback) and the sandbox agent's `status.json` and log. The hold surfaces to clients as a **503** whose body was still to be captured at the time of writing (unverified match).
+* **Outage 2026-11-09 (resolved):** the add-on's App Attest key was rejected three times and it re-enrolled under a new host ID; every slot then sat in `slot_needs_recovery reason=recoveryRequired` (0 free, no jobs for about 66 min) and `darkbloom sandbox setup` did not clear it. Fix: at 0 running jobs, stop the agent, move the per-slot `runtime.snapshot` files aside, kickstart the agent (launchd label `io.darkbloom.sandbox.agent`). Undo by moving them back. Restart the agent only at 0 jobs. A later report to Darkbloom was dropped: the stall followed a macOS point-release install and is a known issue.
+* **Boot race (11-09):** after a reboot the provider's launch agent (`io.darkbloom.provider`, RunAtLoad, no KeepAlive) started before the encrypted model drive had mounted, found no models and exited 1; nothing retried because Darkbloom's own watchdog (`io.darkbloom.watchdog`, restart after 300 s down) was disabled after the update. Our `darkbloom-boot-start.sh` (one launch agent, RunAtLoad) waits for the model cache directory, gives the provider a grace period, then kickstarts it **once**, only if the Mac booted recently, the agent is loaded and enabled (a `darkbloom stop` is respected), it is not running and its last exit was non-zero. It never runs a `darkbloom` command. `DRY_RUN=1` prints only.
+
+### Behaviour we measured or confirmed in code
+
+* **Sampling fields.** Darkbloom (MLX) reads `repetition_penalty`, not llama-server's `repeat_penalty`, and the 35B model's generation config sets none, so unpenalised near-zero-temperature decoding caused output loops and runaway JSON until we sent `repetition_penalty` (2026-10-04; the profile override 1.3 beats the card's 1.0). `darkbloom-field-probe.py` tests, against the live server, whether each request field is honoured (seed determinism, top_k 1 vs 40 divergence, large penalties, tool calls, MTP); it is built so an ignored field looks different from a honoured one. Results are not recorded in this file.
+* **Cold-load gate.** `darkbloom status` is the only place the provider publishes its live load arithmetic ("Live load memory: N GB usable", the warm-model list, per-model "needs X GB" blocks). Our `darkbloom_coldgate.py` parses it so the worker can tell "a cold load cannot fit" (do not wait on a busy slot) from a genuinely busy slot. Observed refusals: 429 "Insufficient memory"; "capacity temporarily unavailable" (gemma-4-26b-8bit never loaded in a 7-minute wait on 11-14); "coordinator routing readiness is unconfirmed" on a model switch.
+* **Memory need for large models.** `gemma-4-26b` (full) needs about 37.7 GB free to load, so it loads only when the Mac has that free (it did not at 14:00 on 11-14 with 34-36 GB).
+* **Demand model.** `darkbloom_demand.py` (shadow only, never acts) reads `console.darkbloom.dev` `/api/network/models?window=24h`, `/api/pricing` and `/api/models` (public figures) to rank models by payout.
+* **Keep-warm** (`darkbloom-keepwarm.py`) now exists in the repo with tests (default off, 60 s tick, never restarts Darkbloom or edits `provider.toml`); the design is as in "Our usage" above.
+* **Watchdog interaction (11-14).** BloomGauge's watchdog restarts Darkbloom after about 10 minutes with no model loaded, and the restart came back on a different model (and rewrote `enabled_models`) both times it fired (13:41 and 17:48). A switch that does not finish loading in about 7 minutes should be reverted before then.
+* **BloomGauge alerts and switching.** Model switches made by an agent produce BloomGauge "model switched" and "problems" notices (four on 11-14). Do not switch models casually.
+
+### Model test for plex decisions (2026-11-14)
+
+Plex's own decision code was run on real history through whichever model Darkbloom served (read-only, standby container). Identity: 340 cases, then 680 and 740 held-out; upgrades: 765 cases. Marks: identity 0 wrong imports, at least 95% right, 95% of answers under 20 s; upgrades at most 5% of kept upgrades turned down, no clear upgrade turned down, every Dolby Vision web grab turned down, answers under 30 s.
+
+| Model | Identity (340) | Upgrades | Typical / slow answer | Verdict |
+|---|---|---|---|---|
+| qwen3.5-35b-a3b | 339 right, 1 wrong import | pass; 7 of 244 kept turned down (2.9%) | 2 s / 4 s | upgrades yes; identity relies on plex's rule checks |
+| qwen3.6-35b-a3b-vl-mtp-mxfp8 | 337 right, 3 wrong imports | pass; 3 of 244 (1.2%) | 2 s / 3 s | upgrades yes; identity relies on rule checks |
+| Qwen3.5-9B | 338 right, 0 wrong | **fails**: 3 clear upgrades turned down | 2 s / 3 s | no |
+| gemma-4-26b | 340 right, 0 wrong | pass; 3 of 244 (1.2%) | 2 s / 2 s | best carefulness; needs about 38 GB |
+| gemma-4-26b-qat-4bit | 340 right, 0 wrong | pass; 6 of 244 (2.5%) | 1 s / 2 s | both pass; fastest |
+| nvidia-nemotron-3.5-lightning | 308 right (refused 32 real matches) | **fails**: 17 of 244 kept turned down (7%) | 2 s / 3 s | no |
+| gemma-4-26b-8bit | never loaded (capacity unavailable) | n/a | n/a | untested |
+
+* On its own the model says "match" to some wrong pairs (qwen3.5 26 of 380 on the held-out set, qwen3.6 51, gemma-4-26b-qat 16, gemma-4-26b 7); the deterministic checks in plex stop the rest. Treat the rules, not the model, as the safety net.
+* The model does not answer identically run to run (7 wrong "match" calls on a rerun vs 5).
+* Answers were fast (1-2 s typical) once loaded; loads took about a minute.
+* Policy change 2026-11-19: **plex no longer uses paid Darkbloom or Claude API keys** (the keys were blanked and the container recreated; verified that no check lists a paid or Claude layer). The paid backup for plex AI is off; only free local layers decide.
+* Paid Darkbloom and the Claude API are also not used for code fixes. If Darkbloom is held longer than a 15-minute wait, a queued job is designed to move to Claude on the subscription, not to the API (design only at this date; not built).
+
+### BloomGauge agent tools (MCP, read-only unless noted)
+
+`get_status` (serving, earning, recent pay, whether agent changes are allowed), `get_manager` (mode, current model, Recommended pick, any switch in progress, servable models), `get_network` (per-model price per token and last-day demand: requests, tokens, machines busy, turned away; public figures), `get_this_mac` (chip, memory, Darkbloom and serving health), `get_alerts`, `get_activity_log` (switches, restarts, pay confirmations, errors; `kind` and `limit` filters, max 200), `get_earnings` (per day, up to 90), `get_expected_pay` (per model, each estimate states its source; a "Rough" one is a guess).
+
+Changing tools: `pick_model` (optional trial of 1, 2 or 4 hours; not while several models are served), `run_recommended`, `set_manager` (Manager on or off) and `restart_darkbloom`. They need "Let your agent make changes" switched on in BloomGauge settings, cost about 2 unpaid minutes per Darkbloom restart, and are limited to 2 switches or restarts per hour.
+
+### Known gaps (still open)
+
+* The 503 body returned during a sandbox hold, and whether `addon-hold.json` is a reliable first signal, are not yet confirmed.
+* Field-probe results, `darkbloom switch` narrowing without restart, and the `memory_reserve_gb` effect remain unrecorded or untested.
+* Whether an account API key works on `/v1/provider/account-earnings`, and whether `console.darkbloom.dev/api/sandbox/hosts` accepts a Bearer key, remain untested.
+* Held-out identity testing covered only the models BloomGauge or we loaded; gemma-4-26b-8bit was never tested.
